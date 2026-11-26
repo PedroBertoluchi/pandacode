@@ -837,9 +837,12 @@ async fn dispatch(
                 )?;
             if args["start"].as_bool().unwrap_or(false) {
                 let id = task.id.clone();
-                crate::launch_task_in_project(app.clone(), state, id, None, None, Some(project_id)).await?;
+                let launched = crate::launch_task_in_project(app.clone(), state, id, None, None, Some(project_id)).await;
                 let mut created = value(task)?;
-                created["started"] = json!(true);
+                created["started"] = json!(launched.is_ok());
+                if let Err(error) = launched {
+                    created["startError"] = json!(error.to_string());
+                }
                 created
             } else {
                 value(task)?
