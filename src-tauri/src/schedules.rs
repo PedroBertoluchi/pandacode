@@ -6,6 +6,7 @@
 
 mod firing;
 pub(crate) mod tools;
+mod windows_tasks;
 #[cfg(test)]
 mod tests;
 
@@ -140,11 +141,12 @@ pub struct SchedulerSettings {
     pub ask_before_messaging_other_tasks: bool,
     pub paused: bool,
     pub agent_limit_per_task: i64,
+    pub windows_schedules_path: String,
 }
 
 impl Default for SchedulerSettings {
     fn default() -> Self {
-        Self { agents_may_schedule: true, ask_before_messaging_other_tasks: true, paused: false, agent_limit_per_task: 10 }
+        Self { agents_may_schedule: true, ask_before_messaging_other_tasks: true, paused: false, agent_limit_per_task: 10, windows_schedules_path: String::new() }
     }
 }
 
@@ -157,7 +159,8 @@ pub(crate) fn set_settings(store: &Store, settings: &SchedulerSettings) -> Resul
     if !(0..=100).contains(&settings.agent_limit_per_task) {
         return Err("The per-thread agent limit must be 0 to 100.".into());
     }
-    let content = serde_json::to_string(settings).map_err(|e| e.to_string())?;
+    let settings = SchedulerSettings { windows_schedules_path: windows_tasks::validate_path(&settings.windows_schedules_path)?, ..settings.clone() };
+    let content = serde_json::to_string(&settings).map_err(|e| e.to_string())?;
     store.db.execute("INSERT INTO scheduler_settings(id,content) VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET content=excluded.content", [content]).map_err(|e| e.to_string())?;
     self::settings(store)
 }
@@ -785,6 +788,12 @@ pub async fn schedule_runs(state: State<'_, AppState>, session_id: Option<String
 #[tauri::command]
 pub async fn scheduler_settings(state: State<'_, AppState>) -> Result<SchedulerSettings> {
     settings(&*lock(&state)?)
+}
+
+#[tauri::command]
+pub async fn schedules_windows(state: State<'_, AppState>) -> Result<windows_tasks::WindowsSchedules> {
+    let path = settings(&*lock(&state)?)?.windows_schedules_path;
+    Ok(tauri::async_runtime::spawn_blocking(move || windows_tasks::read(&path)).await.map_err(|e| e.to_string())?)
 }
 
 #[tauri::command]

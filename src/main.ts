@@ -688,7 +688,7 @@ const $app = document.querySelector<HTMLDivElement>('#app')!;
 $app.innerHTML = `<div class="workspace" data-tauri-drag-region>
   <aside id="workspace-sidebar" class="sidebar" aria-label="Projects and tasks">
     <div class="brand" data-tauri-drag-region><button type="button" class="brand-name" aria-label="Replay PandaCode animation" data-tauri-drag-region="false">PandaCode</button>${button('view-menu', 'Workspace view: Conversation', 'thread', 'view-menu', 'id="view-menu" aria-haspopup="menu" aria-expanded="false"')}</div>
-    <div class="sidebar-actions"><button class="new-task-button" data-action="new-task">${icon('plus')}<span>New task</span><kbd>${shortcut('N')}</kbd></button><button class="new-chat-button" data-action="new-chat" title="New chat (no project)">${icon('chat')}<span>New chat</span></button><button class="schedules-trigger" data-action="schedules" title="Schedules">${icon('clock')}<span>Schedules</span></button><button class="search-trigger" data-action="search">${icon('search')}<span>Search</span><kbd>${shortcut('K')}</kbd></button></div>
+    <div class="sidebar-actions"><button class="new-task-button" data-action="new-task">${icon('plus')}<span>New task</span><kbd>${shortcut('N')}</kbd></button><button class="new-chat-button" data-action="new-chat" title="New chat (no project)">${icon('chat')}<span>New chat</span></button><button class="schedules-trigger" data-action="schedules-panel" title="Schedules">${icon('clock')}<span>Schedules</span></button><button class="search-trigger" data-action="search">${icon('search')}<span>Search</span><kbd>${shortcut('K')}</kbd></button></div>
     <div class="sidebar-projects"><button id="project-filter" class="project-filter" data-action="filter-projects" aria-label="Filter projects" aria-haspopup="dialog" aria-expanded="false"><span data-filter-label>All projects</span>${icon('down')}</button><button id="sidebar-sort" class="icon-button sidebar-sort" data-action="sidebar-sort" aria-label="Sort and view" title="Sort and view" aria-haspopup="menu" aria-expanded="false">${SORT_ICON}</button>${button('import-conversations', 'Import conversations', 'download', 'import-trigger')}${button('add-project', 'Open project', 'plus')}</div>
     <div class="sidebar-search">${icon('search')}<input id="sidebar-filter" type="search" aria-label="Filter tasks" placeholder="Filter tasks" autocomplete="off" spellcheck="false" maxlength="200" aria-keyshortcuts="/"><button type="button" class="sidebar-search-clear" data-action="clear-sidebar-filter" tabindex="-1" aria-label="Clear filter" title="Clear filter">${icon('close')}</button></div>
     <div class="navigation-frame"><div id="navigation" class="navigation"></div></div>
@@ -705,6 +705,7 @@ $app.innerHTML = `<div class="workspace" data-tauri-drag-region>
   <aside id="inspector" class="inspector" aria-label="Project inspector"><div class="inspector-strip"><nav class="inspector-tabs" role="tablist" aria-label="Panel views">${INSPECTOR_AVAILABLE.map(view => `<div class="inspector-tab" data-view="${view}" hidden><button class="inspector-tab-button" role="tab" aria-selected="false" tabindex="-1" data-action="${INSPECTOR_ACTIONS[view]}" aria-label="${INSPECTOR_TITLES[view]}" title="${escape(INSPECTOR_TIPS[view] ?? INSPECTOR_TITLES[view])}">${icon(INSPECTOR_ICONS[view])}<span class="inspector-tab-label">${INSPECTOR_TITLES[view]}</span>${view === 'changes' ? '<span id="changes-count" class="inspector-tab-count"></span>' : ''}</button>${button('close-inspector-tab', `Close ${INSPECTOR_TITLES[view]}`, 'close', 'inspector-tab-close', `data-view="${view}" tabindex="-1"`)}</div>`).join('')}${button('inspector-add-tab', 'Open a view', 'plus', 'inspector-tab-add', 'aria-haspopup="dialog"')}</nav><h2 id="inspector-title" class="sr-only">${INSPECTOR_TITLES[inspectorTabs.selected]}</h2><div class="inspector-strip-actions">${button('refresh-inspector', 'Refresh project', 'refresh', '', 'id="inspector-refresh"')}${button('toggle-inspector', 'Hide inspector', 'panel', 'inspector-hide')}</div></div><div id="inspector-content" class="inspector-content"></div><section id="browser-panel" class="browser-panel" aria-label="Browser" hidden></section><section id="simulator-panel" class="simulator-panel" aria-label="Simulators" hidden></section><section id="vm-panel" class="vm-panel" aria-label="Virtual machines" hidden></section><section id="design-panel" class="design-panel" aria-label="Design" hidden></section><section id="file-panel" class="file-panel" aria-label="Open files" hidden><div id="file-tabs" class="file-tabs" role="tablist" aria-label="Open files" hidden></div><section id="file-view" class="file-view" role="tabpanel" aria-label="Open file" hidden></section></section></aside>
 </div><div id="toast" class="toast" hidden><span class="toast-text" role="status" aria-atomic="false"></span></div><dialog id="dialog"></dialog>`;
 mountDesktopBrand($('.brand-name'));
+void import('./schedules-panel').then(({ mountSchedulesHover }) => mountSchedulesHover($('.schedules-trigger')));
 // Design-system gallery (src/redesign/gallery.ts): browser preview only, with `?ds`.
 if (preview && new URLSearchParams(location.search).has('ds')) void import('./redesign/gallery').then(gallery => gallery.mountGallery());
 mountAgentsDock(document.querySelector<HTMLElement>('#agents-dock-host')!, { openTask: id => run((async () => { await reloadSessions(); await selectSession(id, true); })()) });
@@ -7235,6 +7236,7 @@ let wallpaperSettingsCleanup: (() => void) | undefined;
 let changeReviewCleanup: (() => void) | undefined;
 let providerSettingsCleanup: (() => void) | undefined;
 let agentUsageCleanup: (() => void) | undefined;
+let schedulesPanelCleanup: (() => void) | undefined;
 let conversationImportCleanup: (() => void) | undefined;
 let openCodeModelsCleanup: (() => void) | undefined;
 let moodboardsCleanup: (() => void) | undefined;
@@ -7243,6 +7245,7 @@ function disposeSettingsViews(): void {
   botsView?.dispose(); botsView = undefined;
   boardMentionPicker?.dispose(); boardMentionPicker = undefined;
   agentUsageCleanup?.(); agentUsageCleanup = undefined;
+  schedulesPanelCleanup?.(); schedulesPanelCleanup = undefined;
   conversationImportCleanup?.(); conversationImportCleanup = undefined;
   moodboardsCleanup?.(); moodboardsCleanup = undefined;
   providerSettingsCleanup?.(); providerSettingsCleanup = undefined;
@@ -9070,6 +9073,17 @@ async function openBot(botId: string): Promise<void> {
   if (!state.sessions.some(task => task.id === id)) await reloadSessions();
   await selectSession(id, true);
 }
+async function showSchedulesPanel(): Promise<void> {
+  const dialog = modal('Schedules', '<div id="schedules-panel-host"><p role="status">Loading schedules…</p></div>', 'schedules-panel-dialog');
+  const host = dialog.querySelector<HTMLElement>('#schedules-panel-host')!;
+  try {
+    const { mountSchedulesPanel } = await import('./schedules-panel');
+    if (!dialog.open || !host.isConnected) return;
+    schedulesPanelCleanup = mountSchedulesPanel(host, { openThread: id => { closeModal(); run(selectSession(id, true)); }, openSettings: () => { closeModal(); run(showSettings('schedules')); } });
+  } catch {
+    if (dialog.open && host.isConnected) host.innerHTML = '<p role="alert">Unable to load schedules. Close this window and try again.</p>';
+  }
+}
 async function showAgentUsage(): Promise<void> {
   const dialog = modal('Agent usage', '<div id="agent-usage-host"><p role="status">Loading usage panel…</p></div>', 'agent-usage-dialog');
   const host = dialog.querySelector<HTMLElement>('#agent-usage-host')!;
@@ -9180,6 +9194,7 @@ async function action(name: string, element: HTMLElement): Promise<void> {
     case 'retry-response': { const id = actionTask(element)?.id ?? state.sessionId, finishing = finishingStreams.get(id); if (finishing) await finishResponse(id, finishing); break; }
     case 'settings': case 'refresh-settings': await showSettings(); break;
     case 'schedules': await showSettings('schedules'); break;
+    case 'schedules-panel': await showSchedulesPanel(); break;
     case 'settings-page': await showSettings(element.dataset.id as import('./settings').SettingsSection); if (element.dataset.reveal) revealSetting(element.dataset.reveal); break;
     case 'wallpaper-settings': await showWallpaperSettings(); break;
     case 'provider-connections': await showProviderConnections(); break;

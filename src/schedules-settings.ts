@@ -97,6 +97,7 @@ export function mountSchedulesSettings(host: HTMLElement, options: SchedulesSett
       ${switchRow('askBeforeMessagingOtherTasks', 'Ask before agents message other threads', 'An agent scheduling a message for another thread asks you first. Self wake-ups never ask.')}
       ${switchRow('paused', 'Pause all schedules', 'Holds every schedule without deleting it. Due runs and triggers wait until you resume.')}
       <div class="setting-row"><div><strong>Agent limit per thread</strong><span class="sr-only">Active agent-created schedules allowed on one thread.</span></div><input type="number" class="schedules-limit" min="${LIMIT_MIN}" max="${LIMIT_MAX}" step="1" aria-label="Agent limit per thread">${infoMark('Active agent-created schedules allowed on one thread.', 'About Agent limit per thread')}</div>
+      <div class="setting-row"><div><strong>Windows schedules file</strong><span class="sr-only">Full path of the JSON list of Windows scheduled tasks. Empty hides the Windows tab of the Schedules panel.</span></div><input type="text" class="schedules-windows-path" maxlength="520" autocomplete="off" spellcheck="false" placeholder="Empty hides the Windows tab" aria-label="Windows schedules file">${infoMark('Full path of the JSON list of Windows scheduled tasks. Empty hides the Windows tab of the Schedules panel.', 'About Windows schedules file')}</div>
     </div>
     <p class="schedules-paused" role="status" hidden>${icon('pause')}<span>Schedules are on hold. Nothing is lost: anything due, and any thread that finishes meanwhile, waits here and runs when you resume.</span><button type="button" class="secondary-button" data-resume-all>Resume all</button></p>
     <span id="schedules-held-note" hidden>Paused for all schedules</span>
@@ -139,7 +140,7 @@ export function mountSchedulesSettings(host: HTMLElement, options: SchedulesSett
     <ol class="schedules-activity" aria-label="Recent schedule runs"></ol>
   </div>`;
   const $ = <T extends Element>(selector: string) => host.querySelector<T>(selector)!;
-  const banner = $<HTMLElement>('.schedules-paused'), limit = $<HTMLInputElement>('.schedules-limit');
+  const banner = $<HTMLElement>('.schedules-paused'), limit = $<HTMLInputElement>('.schedules-limit'), windowsPath = $<HTMLInputElement>('.schedules-windows-path');
   const filterGroup = $<HTMLElement>('.schedules-filter'), create = $<HTMLButtonElement>('.schedules-new'), createFlow = $<HTMLButtonElement>('.schedules-new-workflow');
   const list = $<HTMLElement>('.schedules-list'), activity = $<HTMLElement>('.schedules-activity'), error = $<HTMLElement>('.schedules-error');
   const editor = $<HTMLFormElement>('.schedules-editor'), formError = editor.querySelector<HTMLElement>('.schedules-form-error')!, preview = editor.querySelector<HTMLElement>('.schedules-preview')!;
@@ -178,6 +179,7 @@ export function mountSchedulesSettings(host: HTMLElement, options: SchedulesSett
     if (!settings) return;
     host.querySelectorAll<HTMLInputElement>('[data-setting]').forEach(box => { box.checked = Boolean(settings![box.dataset.setting as keyof SchedulerSettings]); });
     if (document.activeElement !== limit) limit.value = String(settings.agentLimitPerTask);
+    if (document.activeElement !== windowsPath) windowsPath.value = settings.windowsSchedulesPath;
     banner.hidden = !settings.paused;
     host.classList.toggle('schedules-held', settings.paused);
   }
@@ -549,6 +551,7 @@ export function mountSchedulesSettings(host: HTMLElement, options: SchedulesSett
       if (!Number.isInteger(value) || value < LIMIT_MIN || value > LIMIT_MAX) { showError(new Error(`The agent limit is ${LIMIT_MIN} to ${LIMIT_MAX} schedules per thread.`)); limit.value = String(settings.agentLimitPerTask); return; }
       void saveSettings({ ...settings, agentLimitPerTask: value });
     }
+    if (target === windowsPath && settings) void saveSettings({ ...settings, windowsSchedulesPath: windowsPath.value.trim() });
     const row = target.closest<HTMLElement>('.schedule-row');
     if (row && target instanceof HTMLInputElement && target.dataset.toggle !== undefined) void act(() => schedulesApi.setEnabled(row.dataset.id!, target.checked));
     const workflowId = target.closest<HTMLElement>('[data-workflow]')?.dataset.workflow;

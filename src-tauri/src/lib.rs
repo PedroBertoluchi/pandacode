@@ -4901,6 +4901,7 @@ pub(crate) fn main_invoke_handler(invoke: tauri::ipc::Invoke<tauri::Wry>) -> boo
         schedules::schedule_snooze,
         schedules::schedule_runs,
         schedules::scheduler_settings,
+        schedules::schedules_windows,
         schedules::scheduler_set_settings,
         bots::channels::bot_channel_add,
         bots::channels::bot_channel_test,
