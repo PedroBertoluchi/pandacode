@@ -5127,11 +5127,8 @@ async function selectProject(id: string): Promise<void> {
 async function webResync(): Promise<void> {
   await reloadSessions();
   const id = state.sessionId;
-  if (!id) return;
-  await mirrorMessages({ sessionId: id });
-  if (id !== state.sessionId) return;
-  setQueue(id, await call<QueuedMessage[]>('queue_list', { sessionId: id }));
-  renderComposer();
+  const queue = Promise.all([refreshQueueHolds().catch(report), id ? refreshQueueList(id).catch(report) : undefined]);
+  await Promise.all([queue.then(renderComposer), id ? mirrorMessages({ sessionId: id }) : undefined]);
 }
 /** Every worker change asks for a listing, so at most one runs and one waits. A waiter's listing starts after its call, so `await` still means "at least as new as this call". */
 function reloadSessions(): Promise<void> {
@@ -5359,14 +5356,61 @@ const runEndings = new Map<string, 'failed' | 'stopped' | 'limited'>();
 /** Entries picked with Send now: delivered before the rest, even past a hold. While the run they
  * stopped is ending, `stopping` keeps the hold from before, so the stop does not pause the others. */
 const sendFirst = new Map<string, { id: string; stopping?: boolean; hold?: HoldReason }>();
+// Snapshot requests and live events share an order, even when their replies arrive out of order.
+let queueClock = 0;
+const queueListVersion = new Map<string, number>();
+const queueHoldVersion = new Map<string, number>();
+let lastQueueHoldSnapshot = 0;
 function queueOf(id: string): QueuedMessage[] { return state.queues.get(id) ?? []; }
 function setQueue(id: string, entries: QueuedMessage[]): void { if (entries.length) state.queues.set(id, entries); else state.queues.delete(id); btwPanel.event(id, 'queue'); }
-/** Native team wakes only need to know whether the desktop is holding the queue. */
+/** Applies a full or single-task snapshot and returns the nonempty queues it loaded. */
+async function refreshQueueList(sessionId?: string): Promise<string[]> {
+  const listSnap = ++queueClock;
+  const entries = await call<QueuedMessage[]>('queue_list', sessionId ? { sessionId } : undefined);
+  const lists = new Map<string, QueuedMessage[]>();
+  for (const entry of entries) {
+    const list = lists.get(entry.sessionId);
+    if (list) list.push(entry); else lists.set(entry.sessionId, [entry]);
+  }
+  const ids = sessionId ? [sessionId] : new Set([...state.queues.keys(), ...queueListVersion.keys(), ...lists.keys()]);
+  const loaded: string[] = [];
+  for (const id of ids) {
+    if (deletedSessions.has(id) || (queueListVersion.get(id) ?? 0) >= listSnap) continue;
+    queueListVersion.set(id, listSnap);
+    const list = lists.get(id) ?? [];
+    setQueue(id, list);
+    if (list.length) loaded.push(id);
+  }
+  return loaded;
+}
+async function refreshQueueHolds(): Promise<void> {
+  const holdSnap = ++queueClock;
+  const holds = await call<Record<string, string>>('queue_holds');
+  // A newer full snapshot also covers holds absent from both its reply and the local map.
+  if (holdSnap < lastQueueHoldSnapshot) return;
+  lastQueueHoldSnapshot = holdSnap;
+  for (const id of new Set([...Object.keys(holds), ...state.queueHolds.keys()])) {
+    if (deletedSessions.has(id) || (queueHoldVersion.get(id) ?? 0) >= holdSnap) continue;
+    queueHoldVersion.set(id, holdSnap);
+    if (Object.hasOwn(holds, id)) state.queueHolds.set(id, asHoldReason(holds[id]));
+    else state.queueHolds.delete(id);
+    btwPanel.event(id, 'queue');
+  }
+}
+function asHoldReason(value: unknown): HoldReason {
+  switch (value) {
+    case 'failed': case 'limited': case 'restart': case 'reset': return value;
+    default: return 'stopped';
+  }
+}
 function setQueueHold(sessionId: string, reason?: HoldReason): void {
-  const wasHeld = state.queueHolds.has(sessionId);
+  const prev = state.queueHolds.get(sessionId);
+  const wasHeld = prev !== undefined;
   const held = reason !== undefined && !deletedSessions.has(sessionId);
+  queueHoldVersion.set(sessionId, ++queueClock);
   if (held) state.queueHolds.set(sessionId, reason); else state.queueHolds.delete(sessionId);
-  if (held !== wasHeld) void call('set_queue_hold', { sessionId, held }).catch(() => undefined);
+  if (held && (!wasHeld || prev !== reason)) void call('set_queue_hold', { sessionId, held: true, reason }).catch(() => undefined);
+  if (!held && wasHeld) void call('set_queue_hold', { sessionId, held: false }).catch(() => undefined);
 }
 function composerPayload(s: Session): { text: string; items: QueuedMessage['attachments'] } {
   const text = document.querySelector<HTMLTextAreaElement>('#prompt')?.value.trim() ?? '';
@@ -5635,6 +5679,7 @@ async function queueAction(action: string, element: HTMLElement): Promise<void> 
   if (action === 'queue-save') return saveQueueEdit(s);
   if (action === 'queue-remove') { await call('queue_remove', { id }); setQueue(s.id, queueOf(s.id).filter(item => item.id !== id)); refreshComposer(s); return; }
   if (action === 'queue-resume') {
+    queueHoldVersion.set(s.id, ++queueClock);
     state.queueHolds.delete(s.id);
     refreshComposer(s);
     await call('set_queue_hold', { sessionId: s.id, held: false }).catch(() => undefined);
@@ -5763,14 +5808,14 @@ function scheduleLimitResumes(): void {
       continue;
     }
     if (task.resumeAtReset) {
-      if (!finishingStreams.has(id)) run(continueAfterLimit(task));
+      if (!webMode && !finishingStreams.has(id)) run(continueAfterLimit(task));
       continue;
     }
     const previous = passedLimitResets.get(id);
     // A run can finish after its reset and install a new hold for the same limit.
     const limitedHold = state.queueHolds.get(id) === 'limited';
     if (!limitedHold && previous?.limitedAt === limitedAt && previous.limitedUntil === limitedUntil) continue;
-    if (limitedHold) setQueueHold(id, 'reset');
+    if (limitedHold && !webMode) setQueueHold(id, 'reset');
     passedLimitResets.set(id, { limitedAt, limitedUntil });
     if (id === state.sessionId) renderComposer();
     refresh = true;
@@ -6538,8 +6583,10 @@ function onAgent(event: AgentEvent): void {
     // Hold even an empty queue: a message saved a moment later must not slip past a failure or limit.
     const first = sendFirst.get(event.sessionId);
     if (first?.stopping) sendFirst.set(event.sessionId, { id: first.id });
-    if (first?.stopping && ending === 'stopped') setQueueHold(event.sessionId, first.hold);
-    else if (ending) setQueueHold(event.sessionId, ending);
+    if (!webMode) {
+      if (first?.stopping && ending === 'stopped') setQueueHold(event.sessionId, first.hold);
+      else if (ending) setQueueHold(event.sessionId, ending);
+    }
     scheduleLimitResumes();
     if (s && botProjects.has(s.projectId)) {
       if (ending === 'failed') failedBotProjects.add(s.projectId);
@@ -9528,10 +9575,19 @@ async function boot(): Promise<void> {
   }));
   // Follow-up changes are shared across clients. On the host, an idle, unheld task sends right away.
   listening.push(subscribe('queue-changed', payload => run((async () => {
-    const id = payload?.sessionId; if (!id) return;
-    if (payload.held === false) state.queueHolds.delete(id);
-    else if (payload.held === true && !state.queueHolds.has(id)) state.queueHolds.set(id, 'stopped');
-    setQueue(id, await call<QueuedMessage[]>('queue_list', { sessionId: id }));
+    const id = payload?.sessionId; if (!id || deletedSessions.has(id)) return;
+    if (payload.held === false) {
+      queueHoldVersion.set(id, ++queueClock);
+      state.queueHolds.delete(id);
+    } else if (payload.held === true) {
+      queueHoldVersion.set(id, ++queueClock);
+      state.queueHolds.set(id, asHoldReason(payload.reason));
+    }
+    const seq = ++queueClock;
+    queueListVersion.set(id, seq);
+    const entries = await call<QueuedMessage[]>('queue_list', { sessionId: id });
+    if (queueListVersion.get(id) !== seq || deletedSessions.has(id)) return;
+    setQueue(id, entries);
     if (id === state.sessionId) renderComposer();
     if (payload.held !== true) await dispatchQueue(id);
   })())));
@@ -9564,11 +9620,10 @@ async function boot(): Promise<void> {
   if (Array.isArray(state.projects)) dropRemovedProjectDrafts(state.drafts, state.projects.map(project => project.id));
   replayDismissals();
   run(call<import('./connections').ConnectionSnapshot>('connections_list').then(onNamedConnections));
-  // Queues from an earlier launch wait for an explicit Resume.
-  for (const entry of await call<QueuedMessage[]>('queue_list').catch(() => [])) {
-    state.queues.set(entry.sessionId, [...(state.queues.get(entry.sessionId) ?? []), entry]);
-    setQueueHold(entry.sessionId, 'restart');
-  }
+  // The desktop pauses queues left over from an earlier launch. Browser tabs load the host's holds.
+  const queued = await refreshQueueList().catch(() => []);
+  if (webMode) await refreshQueueHolds().catch(() => undefined);
+  else for (const id of queued) setQueueHold(id, 'restart');
   scheduleLimitResumes();
   if (state.projectFilter && !state.projects.some(p => p.id === state.projectFilter)) setProjectFilter('');
   const savedProject = localStorage.getItem('pandacode.project');
