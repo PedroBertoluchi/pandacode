@@ -15,7 +15,7 @@ export type UpdateState =
 /** Automatic installs when idle; Notify checks and asks first; Off checks only on request. */
 export type UpdateMode = 'automatic' | 'notify' | 'off';
 
-export const CHECK_EVERY = 6 * 60 * 60 * 1000;
+export const CHECK_EVERY = 60 * 60 * 1000;
 /** A downloaded update installs after this long without input, when no agent is working. */
 export const IDLE_BEFORE_RESTART = 2 * 60 * 1000;
 

@@ -3,7 +3,7 @@ name: Fork release
 # bertoluchi-vX.Y.Z, the Windows installer the fork's in-app updater reads (latest.json).
 on:
   schedule:
-    - cron: '0 */3 * * *'
+    - cron: '7 * * * *'
   workflow_dispatch:
     inputs:
       force:
