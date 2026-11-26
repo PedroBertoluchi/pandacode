@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_SORT, PROJECT_ORDER_KEY, SORT_KEY, compareCompleted, readProjectOrder, compareManual, matchesFilter, projectComparator, readSort, taskComparator } from '../src/sidebar-sort.ts';
+import { DEFAULT_SORT, PROJECT_ORDER_KEY, SORT_KEY, compareCompleted, readProjectOrder, compareManual, matchesFilter, projectComparator, projectSections, readSort, taskComparator } from '../src/sidebar-sort.ts';
 import { folderGroups } from '../src/sidebar-tree.ts';
 
 const task = (id, extra = {}) => ({ id, projectId: 'p', title: id, createdAt: 1, updatedAt: 1, lastResponseAt: null, lastPromptAt: null, sidebarOrder: null, ...extra });
@@ -42,9 +42,43 @@ test('the saved sort is validated field by field', () => {
   assert.deepEqual(read(null), DEFAULT_SORT);
   assert.deepEqual(read('not json'), DEFAULT_SORT);
   assert.deepEqual(read(JSON.stringify({ tasks: 'recent', projects: 'bogus', perProject: 7 })), { ...DEFAULT_SORT, tasks: 'recent' });
-  assert.deepEqual(read(JSON.stringify({ tasks: 'created', projects: 'name', perProject: 15, group: 'flat' })), { tasks: 'created', projects: 'name', perProject: 15, group: 'flat' });
+  assert.deepEqual(read(JSON.stringify({ tasks: 'created', projects: 'name', perProject: 15, group: 'flat' })), { tasks: 'created', projects: 'name', perProject: 15, group: 'flat', byProject: false });
   assert.deepEqual(read(JSON.stringify({ projects: 'manual', group: 'tree' })), { ...DEFAULT_SORT, projects: 'manual' });
   assert.deepEqual(readSort({ getItem: () => { throw new Error('denied'); } }), DEFAULT_SORT);
+  assert.equal(DEFAULT_SORT.byProject, false);
+  assert.deepEqual(read(JSON.stringify({ tasks: 'recent', byProject: true })), { ...DEFAULT_SORT, tasks: 'recent', byProject: true });
+  assert.deepEqual(read(JSON.stringify({ byProject: 'yes' })), DEFAULT_SORT);
+  assert.deepEqual(read(JSON.stringify({ byProject: 1 })), DEFAULT_SORT);
+});
+
+test('project sections count running, active and finished, and list only unsettled work', () => {
+  const projects = [{ id: 'a', name: 'Alpha', path: '/a' }, { id: 'b', name: 'Beta', path: '/b' }];
+  const stages = { a1: 'in_progress', a2: 'review', a3: 'completed', b1: 'completed', b2: 'completed' };
+  const tasks = Object.keys(stages).map(id => task(id, { projectId: id[0], taskStage: stages[id], lastPromptAt: 10 }));
+  const listed = tasks.filter(t => stages[t.id] !== 'completed');
+  const sections = projectSections({ projects, tasks, listed, running: t => t.id === 'a1', stage: t => t.taskStage });
+  assert.deepEqual(sections.map(s => [s.project.id, s.running, s.active, s.finished, ids(s.tasks)]), [['a', 1, 2, 1, ['a1', 'a2']]]);
+});
+
+test('project sections: running first, then the most active, then the project sort; tasks keep their order', () => {
+  const projects = [{ id: 'z', name: 'Zeta', path: '/z' }, { id: 'a', name: 'Alpha', path: '/a' }, { id: 'm', name: 'Mid', path: '/m' }, { id: 'q', name: 'Quiet', path: '/q' }];
+  const spec = { z: [3, false], a: [1, true], m: [3, false], q: [2, false] };
+  const tasks = Object.entries(spec).flatMap(([project, [count, busy]]) => Array.from({ length: count }, (_, i) => task(`${project}${i}`, { projectId: project, taskStage: 'review', lastPromptAt: project === 'm' ? 50 : 10 })).map((t, i) => ({ ...t, busy: busy && i === 0 })));
+  const listed = [...tasks].reverse();
+  const run = sort => projectSections({ projects, tasks, listed, running: t => t.busy, stage: t => t.taskStage, sort }).map(s => s.project.id);
+  assert.deepEqual(run('recent'), ['a', 'm', 'z', 'q']);
+  assert.deepEqual(run('name'), ['a', 'm', 'z', 'q']);
+  assert.deepEqual(run('added'), ['a', 'z', 'm', 'q']);
+  const sections = projectSections({ projects, tasks, listed, running: t => t.busy, stage: t => t.taskStage });
+  assert.deepEqual(ids(sections.find(s => s.project.id === 'z').tasks), ['z2', 'z1', 'z0']);
+});
+
+test('project sections drop projects with nothing to list and never list another project\'s task', () => {
+  const projects = [{ id: 'a', name: 'Alpha', path: '/a' }, { id: 'b', name: 'Beta', path: '/b' }];
+  const tasks = [task('a1', { projectId: 'a', taskStage: 'completed' }), task('b1', { projectId: 'b', taskStage: 'review' })];
+  const sections = projectSections({ projects, tasks, listed: [tasks[1]], running: () => false, stage: t => t.taskStage });
+  assert.deepEqual(sections.map(s => [s.project.id, ids(s.tasks)]), [['b', ['b1']]]);
+  assert.deepEqual(projectSections({ projects, tasks, listed: [], running: () => false, stage: t => t.taskStage }), []);
 });
 
 test('projects sort by recent activity, order added, or name', () => {
