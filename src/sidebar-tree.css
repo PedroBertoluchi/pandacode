@@ -158,6 +158,10 @@ html[data-theme=dark] .sidebar .new-task-button>.icon{color:var(--focus)}
 /* Active and Finished fold from a plain heading: a line runs from the label to the count, which sits at the
    row's right edge like every other heading; on hover or focus the chevron takes the count's place. */
 .sidebar .section-fold{position:relative;width:100%;--press:1}
+.sidebar .section-fold:has(>.project-stats){flex-wrap:wrap;row-gap:0;padding-block:4px}
+.sidebar .section-fold>.project-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sidebar .section-fold>.project-name{flex:0 1 auto;color:var(--text);font-size:var(--type-subheading);line-height:var(--type-subheading-leading);font-weight:var(--type-subheading-weight)}
+.sidebar .section-fold>.project-stats{order:1;flex:1 0 100%;text-align:start}
 .sidebar .section-fold>.section-rule{flex:1;min-width:12px;height:1px;background:var(--tree-guide)}
 .sidebar .section-fold>.section-count{margin-left:0;transition:opacity var(--ds-ease-in) ease-out}
 .sidebar .section-fold>.icon{position:absolute;right:9px;--icon-size:var(--icon-xs);--icon-stroke:var(--icon-stroke-xs);color:var(--muted);rotate:90deg;opacity:0;transition:rotate var(--spring-fast-duration) var(--spring-fast),opacity var(--ds-ease-in) ease-out}

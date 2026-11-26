@@ -457,3 +457,88 @@ test('rows sit on the section card with no inner panel, and the open thread is a
   expect(shadow).toContain('inset');
   expect(shadow.split(/,\s*(?![^(]*\))/).length).toBeGreaterThan(1);
 });
+
+test.describe('group by project', () => {
+  const groups = (page: Page) => page.locator('#navigation > .task-group').evaluateAll(list => list.map(g => (g as HTMLElement).dataset.threadGroup));
+  const heading = (page: Page, project: string) => section(page, `project:${project}`).locator('.section-heading');
+  const grouped = (page: Page) => page.addInitScript(() => localStorage.setItem('pandacode.sidebar.sort', JSON.stringify({ byProject: true })));
+  const openGrouped = async (page: Page) => {
+    await grouped(page);
+    await page.goto('/?sections');
+    await expect(section(page, 'project:project-1')).toBeVisible();
+  };
+
+  test('every project becomes a section with its counts, Chats stay apart and Settled stays docked', async ({ page }) => {
+    await openGrouped(page);
+    expect(await groups(page)).toEqual(['pinned', 'project:project-1', 'project:project-2', 'chats', 'completed']);
+    await expect(heading(page, 'project-1').locator('.project-name')).toHaveText('orbit');
+    await expect(heading(page, 'project-1').locator('.project-stats')).toHaveText('1 running · 14 active · 7 finished');
+    await expect(heading(page, 'project-2').locator('.project-stats')).toHaveText('1 running · 5 active · 5 finished');
+    await expect(page.getByRole('region', { name: 'orbit', exact: true })).toBeVisible();
+    await expect(section(page, 'active')).toHaveCount(0);
+    await expect(section(page, 'review')).toHaveCount(0);
+    expect(await ids(page, 'project:project-1')).toEqual(['sections-running', 'sections-limited', 'session-1', 'sections-review-1', 'session-2', 'session-3']);
+    expect(await ids(page, 'project:project-2')).toEqual(['sections-approval', 'sections-failed', 'sections-review-2', 'sections-long', 'session-4']);
+    expect(await ids(page, 'chats')).toEqual(['sections-chat', 'sections-chat-2', 'sections-chat-3', 'sections-chat-4']);
+    expect(await ids(page, 'pinned')).toEqual(['sections-pinned']);
+    await expect(toggle(page)).toContainText('12');
+    for (const id of ['sections-running', 'sections-review-2', 'sections-chat']) await expect(row(page, id)).toHaveCount(1);
+  });
+
+  test('Sort and view turns it on and off and saves it with the sort', async ({ page }) => {
+    await page.addInitScript(() => { if (!localStorage.getItem('pandacode.sidebar.sort')) localStorage.setItem('pandacode.sidebar.sort', JSON.stringify({ tasks: 'recent' })); });
+    await open(page);
+    await expect(section(page, 'active')).toHaveCount(1);
+    await page.getByRole('button', { name: 'Sort and view', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Sort and view', exact: true });
+    await expect(dialog.getByRole('menuitemradio', { name: /Group by project/ })).toHaveAttribute('aria-checked', 'false');
+    await dialog.getByRole('menuitemradio', { name: /Group by project/ }).click();
+    await expect(dialog).toBeHidden();
+    await expect(section(page, 'project:project-1')).toHaveCount(1);
+    await expect(section(page, 'active')).toHaveCount(0);
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('pandacode.sidebar.sort')!))).toMatchObject({ tasks: 'recent', byProject: true });
+    await page.reload();
+    await expect(section(page, 'project:project-1')).toHaveCount(1);
+    await page.getByRole('button', { name: 'Sort and view', exact: true }).click();
+    await expect(dialog.getByRole('menuitemradio', { name: /Group by project/ })).toHaveAttribute('aria-checked', 'true');
+    await dialog.getByRole('menuitemradio', { name: /Group by project/ }).click();
+    await expect(section(page, 'project:project-1')).toHaveCount(0);
+    await expect(section(page, 'active')).toHaveCount(1);
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('pandacode.sidebar.sort')!))).toMatchObject({ tasks: 'recent', byProject: false });
+  });
+
+  test('a project section folds from its heading and stays folded after reload; Show more reaches its other tasks', async ({ page }) => {
+    await openGrouped(page);
+    const fold = heading(page, 'project-1');
+    await expect(fold).toHaveAttribute('aria-expanded', 'true');
+    await section(page, 'project:project-1').getByRole('button', { name: 'Show 7 more', exact: true }).click();
+    await expect(section(page, 'project:project-1').locator('.task-item')).toHaveCount(13);
+    await section(page, 'project:project-1').getByRole('button', { name: 'Show less', exact: true }).click();
+    await expect(section(page, 'project:project-1').locator('.task-item')).toHaveCount(6);
+    await fold.click();
+    await expect(fold).toHaveAttribute('aria-expanded', 'false');
+    await expect(section(page, 'project:project-1').locator('.task-item')).toHaveCount(0);
+    await expect(fold.locator('.project-stats')).toBeVisible();
+    await page.reload();
+    await expect(heading(page, 'project-1')).toHaveAttribute('aria-expanded', 'false');
+    await expect(heading(page, 'project-2')).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  test('the text filter still narrows the sections and their counts', async ({ page }) => {
+    await openGrouped(page);
+    await page.getByRole('searchbox', { name: 'Filter tasks', exact: true }).fill('release notes');
+    expect(await groups(page)).toEqual(['project:project-2']);
+    expect(await ids(page, 'project:project-2')).toEqual(['sections-review-2']);
+    await expect(heading(page, 'project-2').locator('.project-stats')).toHaveText('0 running · 1 active · 0 finished');
+  });
+
+  test('a chosen project keeps today’s single list without sections', async ({ page }) => {
+    await grouped(page);
+    await page.addInitScript(() => localStorage.setItem('pandacode.projectFilter', 'project-1'));
+    await open(page);
+    await expect(page.locator('#navigation .project-stats')).toHaveCount(0);
+    await expect(section(page, 'active')).toHaveCount(1);
+    await expect(section(page, 'review')).toHaveCount(1);
+    expect(await ids(page, 'active')).toEqual(['sections-running', 'sections-limited']);
+  });
+});

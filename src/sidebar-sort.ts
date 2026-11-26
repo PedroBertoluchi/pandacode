@@ -1,17 +1,17 @@
 /** Sidebar sort and view preferences, and the comparators every sidebar list uses. Pure: no DOM. */
-import type { Project, Session } from './types';
+import type { Project, Session, TaskStage } from './types';
 
 export type TaskSort = 'manual' | 'recent' | 'created';
 export type ProjectSort = 'recent' | 'added' | 'name' | 'manual';
 /** By project: one folder per project. Flat: one list, each row naming its project. */
 export type SidebarGroup = 'project' | 'flat';
-export interface SidebarSort { tasks: TaskSort; projects: ProjectSort; perProject: number; group: SidebarGroup }
+export interface SidebarSort { tasks: TaskSort; projects: ProjectSort; perProject: number; group: SidebarGroup; byProject: boolean }
 
 export const SORT_KEY = 'pandacode.sidebar.sort';
 /** Folder order dragged by hand (Projects: Manual), as project ids. */
 export const PROJECT_ORDER_KEY = 'pandacode.sidebar.projectOrder';
 export const PER_PROJECT = [3, 6, 10, 15] as const;
-export const DEFAULT_SORT: SidebarSort = { tasks: 'manual', projects: 'recent', perProject: 6, group: 'project' };
+export const DEFAULT_SORT: SidebarSort = { tasks: 'manual', projects: 'recent', perProject: 6, group: 'project', byProject: false };
 const TASK_SORTS: readonly TaskSort[] = ['manual', 'recent', 'created'];
 const PROJECT_SORTS: readonly ProjectSort[] = ['recent', 'added', 'name', 'manual'];
 const GROUPS: readonly SidebarGroup[] = ['project', 'flat'];
@@ -25,6 +25,7 @@ export function readSort(storage: Pick<Storage, 'getItem'>): SidebarSort {
     projects: PROJECT_SORTS.includes(saved.projects as ProjectSort) ? saved.projects as ProjectSort : DEFAULT_SORT.projects,
     perProject: PER_PROJECT.includes(saved.perProject as 6) ? saved.perProject as number : DEFAULT_SORT.perProject,
     group: GROUPS.includes(saved.group as SidebarGroup) ? saved.group as SidebarGroup : DEFAULT_SORT.group,
+    byProject: typeof saved.byProject === 'boolean' ? saved.byProject : DEFAULT_SORT.byProject,
   };
 }
 
@@ -85,6 +86,48 @@ export function projectComparator(sort: ProjectSort, projects: readonly Project[
     return (a, b) => (rank.get(a.id) ?? -1) - (rank.get(b.id) ?? -1) || recent(a, b);
   }
   return recent;
+}
+
+export interface ProjectSection {
+  project: Project;
+  /** Tasks of the project that are running or waiting. */
+  running: number;
+  /** Tasks of the project that are not settled. */
+  active: number;
+  /** Tasks of the project that are settled. */
+  finished: number;
+  /** The tasks this section lists, in the order they were given. */
+  tasks: Session[];
+}
+
+export interface ProjectSectionsInput {
+  projects: readonly Project[];
+  /** Every task of these projects, wherever it is listed; the counts read them. */
+  tasks: readonly Session[];
+  /** The tasks the sections list, already in sidebar order. */
+  listed: readonly Session[];
+  running(task: Session): boolean;
+  stage(task: Session): TaskStage;
+  sort?: ProjectSort;
+  manual?: readonly string[];
+}
+
+/** One section per project that lists a task: projects with work running first, then the most
+ * unsettled tasks, then the project sort. Tasks keep the order they came in. */
+export function projectSections({ projects, tasks, listed, running, stage, sort = 'recent', manual = [] }: ProjectSectionsInput): ProjectSection[] {
+  const latest = new Map<string, number>(), counts = new Map<string, { running: number; active: number; finished: number }>();
+  for (const task of tasks) {
+    latest.set(task.projectId, Math.max(latest.get(task.projectId) ?? 0, activityAt(task)));
+    const count = counts.get(task.projectId) ?? { running: 0, active: 0, finished: 0 };
+    if (running(task)) count.running++;
+    if (stage(task) === 'completed') count.finished++; else count.active++;
+    counts.set(task.projectId, count);
+  }
+  const order = projectComparator(sort, projects, latest, manual);
+  return projects
+    .map(project => ({ project, running: 0, active: 0, finished: 0, ...counts.get(project.id), tasks: listed.filter(task => task.projectId === project.id) }))
+    .filter(section => section.tasks.length)
+    .sort((a, b) => Number(b.running > 0) - Number(a.running > 0) || b.active - a.active || order(a.project, b.project));
 }
 
 /** Lower-case text a sidebar filter matches: title, branch, linked PR or issue, project. */

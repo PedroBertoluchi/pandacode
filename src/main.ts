@@ -4,7 +4,7 @@ import { revealSetting } from './settings-reveal';
 import { bindThreadReordering, syncRovingFocus, threadGroupRows } from './thread-order';
 import { PROJECT_LIMIT, readCollapsed, shownTasks } from './sidebar-tree';
 import { COLLAPSED_SECTIONS_KEY, COMPLETED_OPEN_KEY, UNREVIEWED_KEY, readOpen, sectionOf, sidebarSections, type HeldSection } from './sidebar-sections';
-import { PER_PROJECT, PROJECT_ORDER_KEY, SORT_KEY, compareManual, matchesFilter, readProjectOrder, readSort, taskComparator, type SidebarSort } from './sidebar-sort';
+import { PER_PROJECT, PROJECT_ORDER_KEY, SORT_KEY, compareManual, matchesFilter, projectSections, readProjectOrder, readSort, taskComparator, type SidebarSort } from './sidebar-sort';
 import './styles.css';
 import './feature-requests.css';
 import { createVoiceDictation, voiceButtonHtml } from './voice-dictation';
@@ -2313,7 +2313,10 @@ function renderNavigation(): void {
   };
   // All projects: no folders, only sections. Projectless chats, then every other task, each row
   // naming its project; a chosen project filter hides chats.
-  const chats = single ? [] : visible.filter(s => !s.pinned && chatTask(s));
+  const grouping = sidebarSort.byProject && !single;
+  const grouped = grouping ? [...sections.active, ...sections.review] : [];
+  const projectless = (s: Session) => chatTask(s) || !state.projects.some(p => p.id === s.projectId);
+  const chats = single ? [] : grouping ? grouped.filter(projectless) : visible.filter(s => !s.pinned && chatTask(s));
   const others = single ? [] : visible.filter(s => !s.pinned && !chatTask(s));
   const listed = (key: string, tasks: Session[], showProject: boolean) => () => {
     const { rows, more } = capped(key, tasks, sidebarSort.perProject);
@@ -2321,6 +2324,10 @@ function renderNavigation(): void {
   };
   const chatGroup = section('chats', 'Chats', 'Chats', chats.length, listed('chats', chats, false));
   const tasksGroup = section('all', 'Tasks', 'Tasks', others.length, listed('all', others, true));
+  const projectGroups = grouping ? projectSections({
+    projects: state.projects, tasks: matching.filter(s => !projectless(s)), listed: grouped.filter(s => !projectless(s)),
+    running: s => isRunning(s.id), stage: taskStage, sort: sidebarSort.projects, manual: projectOrder,
+  }).map(group => section(`project:${group.project.id}`, `<span class="project-name">${escape(group.project.name)}</span><span class="project-stats">${group.running} running · ${group.active} active · ${group.finished} finished</span>`, escape(group.project.name), group.tasks.length, listed(group.project.id, group.tasks, false))).join('') : '';
   // A selected project is already named by the filter above: list its tasks flat, with room for more.
   const project = single ? state.projects.find(p => p.id === state.projectFilter) : undefined;
   const projectTasks = project ? visible.filter(s => !s.pinned && s.projectId === project.id) : [];
@@ -2340,7 +2347,7 @@ function renderNavigation(): void {
   // Morph rather than replace: unchanged rows keep their nodes, so nothing flickers.
   // Rows sit one level deeper than before (.task-row around .task-item), so morph one level deeper.
   morph(nav, !userProjects().length && !chats.length && !pinned.length && !sectioned ? (projectsListed ? '<div class="sidebar-empty">Open a project to get started.</div>' : '')
-    : `${pinnedGroup}${section('active', 'Active', 'Active tasks', sections.active.length, () => sections.active.map(s => row(s, !single)).join(''))}${section('review', 'Finished', 'Finished tasks', sections.review.length, () => { const { rows, more } = capped('review', sections.review, sidebarSort.perProject); return rows.map(s => row(s, !single, manual)).join('') + more; })}${chatGroup}${tasksGroup}${projectList}${filtering && !matching.length ? empty : ''}${completedSection}`, 6);
+    : `${pinnedGroup}${section('active', 'Active', 'Active tasks', grouping ? 0 : sections.active.length, () => sections.active.map(s => row(s, !single)).join(''))}${section('review', 'Finished', 'Finished tasks', grouping ? 0 : sections.review.length, () => { const { rows, more } = capped('review', sections.review, sidebarSort.perProject); return rows.map(s => row(s, !single, manual)).join('') + more; })}${projectGroups}${chatGroup}${tasksGroup}${projectList}${filtering && !matching.length ? empty : ''}${completedSection}`, 6);
   if (retainedRow) {
     const replacement = nav.querySelector<HTMLElement>(`.task-item[data-id="${CSS.escape(retainedRow.dataset.id!)}"]`);
     if (replacement) {
@@ -7903,13 +7910,14 @@ function reorderFolders(ids: string[], focus: string): void {
 async function showSidebarSort(anchor: HTMLElement): Promise<void> {
   const sort = sidebarSort;
   await showChoices(anchor, { title: 'Sort and view', width: 280, items: [
+    { id: 'byProject:toggle', label: 'Group by project', description: 'one section per project', heading: 'View', selected: sort.byProject },
     { id: 'tasks:manual', label: 'Manual', description: 'drag to arrange', heading: 'Sort tasks', selected: sort.tasks === 'manual' },
     { id: 'tasks:recent', label: 'Recent activity', selected: sort.tasks === 'recent' },
     { id: 'tasks:created', label: 'Created', selected: sort.tasks === 'created' },
     ...PER_PROJECT.map(count => ({ id: `perProject:${count}`, label: `${count} tasks`, short: String(count), segment: 'Show per section', selected: sort.perProject === count })),
   ], onSelect: id => {
     const [key, value] = id.split(':');
-    const next: SidebarSort = key === 'perProject' ? { ...sidebarSort, perProject: Number(value) } : { ...sidebarSort, [key]: value };
+    const next: SidebarSort = key === 'perProject' ? { ...sidebarSort, perProject: Number(value) } : key === 'byProject' ? { ...sidebarSort, byProject: !sidebarSort.byProject } : { ...sidebarSort, [key]: value };
     sidebarSort = readSort({ getItem: () => JSON.stringify(next) });
     try { localStorage.setItem(SORT_KEY, JSON.stringify(sidebarSort)); } catch { /* per-launch preference only */ }
     renderNavigation();
