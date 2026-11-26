@@ -164,7 +164,7 @@ pub struct Store {
 type Result<T> = std::result::Result<T, String>;
 /// The newest `PRAGMA user_version`. Every migration step below must run for any
 /// database older than this, so the guard reads this constant, never a literal.
-pub const SCHEMA_VERSION: i64 = 38;
+pub const SCHEMA_VERSION: i64 = 37;
 /// A team snapshot's `status` parsed from its row, NULL for a corrupt snapshot.
 macro_rules! team_status_sql {
     () => { "CASE WHEN json_valid(content) THEN json_extract(content,'$.status') END" };
@@ -327,6 +327,19 @@ impl Store {
         tx.execute_batch(TEAM_STATUS_SCHEMA).map_err(|e| e.to_string())?;
         if triggers != TEAM_STATUS_TRIGGERS.len() as i64 {
             tx.execute_batch("DELETE FROM architect_team_status").map_err(|e| e.to_string())?;
+        }
+        tx.commit().map_err(|e| e.to_string())
+    }
+
+    /// Adds the new-task columns to `task_schedules` when missing. Created at every open, never by
+    /// a migration, so `user_version` stays at upstream's and its next migration still runs.
+    fn prepare_schedule_columns(db: &mut Connection) -> Result<()> {
+        let tx = db.transaction().map_err(|e| e.to_string())?;
+        for (name, definition) in [("new_task", "INTEGER NOT NULL DEFAULT 0"), ("last_task_id", "TEXT REFERENCES sessions(id) ON DELETE SET NULL")] {
+            let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('task_schedules') WHERE name=?1)", [name], |r| r.get(0)).map_err(|e| e.to_string())?;
+            if !exists {
+                tx.execute_batch(&format!("ALTER TABLE task_schedules ADD COLUMN {name} {definition};")).map_err(|e| e.to_string())?;
+            }
         }
         tx.commit().map_err(|e| e.to_string())
     }
@@ -725,18 +738,10 @@ impl Store {
                   UPDATE scheduler_settings SET content=json_remove(content,'$.remoteSaved') WHERE id=1 AND json_valid(content);
                   PRAGMA user_version=37;").map_err(|e| e.to_string())?;
             }
-            if version < 38 {
-                for (name, definition) in [("new_task", "INTEGER NOT NULL DEFAULT 0"), ("last_task_id", "TEXT REFERENCES sessions(id) ON DELETE SET NULL")] {
-                    let exists: bool = migration.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('task_schedules') WHERE name=?1)", [name], |r| r.get(0)).map_err(|e| e.to_string())?;
-                    if !exists {
-                        migration.execute_batch(&format!("ALTER TABLE task_schedules ADD COLUMN {name} {definition};")).map_err(|e| e.to_string())?;
-                    }
-                }
-                migration.execute_batch("PRAGMA user_version=38;").map_err(|e| e.to_string())?;
-            }
             migration.commit().map_err(|e| e.to_string())?;
         }
         Self::prepare_team_status(&mut db)?;
+        Self::prepare_schedule_columns(&mut db)?;
         let recovery = db.transaction().map_err(|e| e.to_string())?;
         // Only rows from before typed coordination existed are eligible for the
         // narrowly scoped legacy display projection. New user copies stay user text.
