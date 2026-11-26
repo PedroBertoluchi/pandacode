@@ -793,7 +793,7 @@ pub async fn scheduler_settings(state: State<'_, AppState>) -> Result<SchedulerS
 #[tauri::command]
 pub async fn schedules_windows(state: State<'_, AppState>) -> Result<windows_tasks::WindowsSchedules> {
     let path = settings(&*lock(&state)?)?.windows_schedules_path;
-    Ok(tauri::async_runtime::spawn_blocking(move || windows_tasks::read(&path)).await.map_err(|e| e.to_string())?)
+    tauri::async_runtime::spawn_blocking(move || windows_tasks::read(&path)).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
