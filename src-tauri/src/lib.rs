@@ -792,7 +792,7 @@ fn app_instructions(chat: bool, worker: bool) -> String {
         return [turn_changes::instruction(), TURN_ENDS].concat();
     }
     let run = if chat { "" } else { run_script::INSTRUCTIONS };
-    [session_titles::GUIDANCE, run, turn_changes::instruction(), TURN_ENDS, RICH_QUESTIONS, GENERATIVE_UI, VISUAL_PROGRESS, FEATURE_REQUESTS].concat()
+    [session_titles::GUIDANCE, run, turn_changes::instruction(), TURN_ENDS, RICH_QUESTIONS, GENERATIVE_UI, VISUAL_PROGRESS, FEATURE_REQUESTS, PROJECTS].concat()
 }
 
 /// The largest prompt, steer or task description PandaCode accepts: large enough for long
@@ -814,6 +814,8 @@ const VISUAL_PROGRESS: &str = "\n\nVisual progress: only when your work has a gr
 /// Wishes for PandaCode itself become a card the user decides on; the agent never sends one.
 const FEATURE_REQUESTS: &str = "\n\nFeature requests: when the user wants something PandaCode itself does not do (a feature of the app, not a change to their project), call pandacode_suggest_feature once with a short title and a description of the problem and your proposal. The user decides on the card shown in this thread; write it in general terms about PandaCode, with no file paths, code, names or secrets from the user's project (the text goes to GitHub if the user sends it); never open an issue or send anything yourself.";
 
+const PROJECTS: &str = "\n\nProjects: a new task about a codebase other than this thread's belongs in that codebase's project. Call pandacode_list_projects and pass its projectId to pandacode_create_task (start: true to run it now); when the folder is not registered yet, register it first with pandacode_create_project.";
+
 /// Harnesses without a system prompt hear the app instructions again every few turns.
 const INSTRUCTION_REMINDER_EVERY: i64 = 8;
 fn reminder_turn(turns: i64) -> bool {
@@ -830,23 +832,24 @@ mod instruction_tests {
         assert_eq!(reminded, [1, 9, 17]);
         assert!(!reminder_turn(0));
         let text = app_instructions(false, false);
-        for part in ["Sidebar titles:", "Run and preview workflow:", "File change tracking:", "Questions you ask through the request_user_input tool", "Your turn ends when you reply", "Generative UI:", "Visual progress:", "Feature requests:"] {
+        for part in ["Sidebar titles:", "Run and preview workflow:", "File change tracking:", "Questions you ask through the request_user_input tool", "Your turn ends when you reply", "Generative UI:", "Visual progress:", "Feature requests:", "Projects:"] {
             assert!(text.contains(part), "{part}");
         }
         assert!(text.contains("wait for every subagent you started"), "a harness whose turn end closes its subagents waits for them");
         let chat = app_instructions(true, false);
         assert!(!chat.contains("Run and preview workflow:") && chat.contains("Sidebar titles:") && chat.contains("Visual progress:") && chat.contains("pandacode_suggest_feature"));
         assert!(text.contains("no file paths, code, names or secrets from the user's project"), "feature requests stay general");
+        assert!(text.contains("pandacode_create_project") && chat.contains("pandacode_create_project"));
     }
 
     #[test]
     fn team_workers_get_only_change_tracking_and_turn_end() {
         let lead = app_instructions(false, false);
         let worker = app_instructions(false, true);
-        assert_eq!(lead, [session_titles::GUIDANCE, run_script::INSTRUCTIONS, turn_changes::instruction(), TURN_ENDS, RICH_QUESTIONS, GENERATIVE_UI, VISUAL_PROGRESS, FEATURE_REQUESTS].concat());
+        assert_eq!(lead, [session_titles::GUIDANCE, run_script::INSTRUCTIONS, turn_changes::instruction(), TURN_ENDS, RICH_QUESTIONS, GENERATIVE_UI, VISUAL_PROGRESS, FEATURE_REQUESTS, PROJECTS].concat());
         assert_eq!(worker, [turn_changes::instruction(), TURN_ENDS].concat());
         assert!(worker.contains("File change tracking:") && worker.contains("Your turn ends when you reply"));
-        for gone in ["Sidebar titles:", "Run and preview workflow:", "Generative UI:", "request_user_input", "Feature requests:", "pandacode_suggest_feature"] {
+        for gone in ["Sidebar titles:", "Run and preview workflow:", "Generative UI:", "request_user_input", "Feature requests:", "pandacode_suggest_feature", "Projects:", "pandacode_create_project"] {
             assert!(!worker.contains(gone), "{gone}");
         }
         eprintln!("app instructions: lead {} B, worker {} B", lead.len(), worker.len());
