@@ -9530,7 +9530,7 @@ async function boot(): Promise<void> {
     subscribe('provider-models-changed', event => invalidateModels(event.provider)),
     subscribe('architect-event', onArchitect),
     subscribe('sessions-deleted', event => removeDeletedSessions(event.sessionIds)),
-    subscribe('sessions-changed', () => run(reloadSessions())),
+    subscribe('sessions-changed', () => run(Promise.all([reloadSessions(), call<Project[]>('list_projects').then(projects => { if (projects.length !== state.projects.length) { state.projects = projects; renderNavigation(); } })]))),
     subscribe('mirror-messages' as 'queue-changed', (event: { sessionId: string; older?: boolean }) => run(mirrorMessages(event))),
   ];
   window.addEventListener(TEAM_MODE_EVENT, () => { if (session()) renderComposer(); });
