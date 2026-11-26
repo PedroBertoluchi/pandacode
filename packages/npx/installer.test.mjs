@@ -97,7 +97,9 @@ test('the installer covers every published build', () => {
   assert.deepEqual(missing, []);
 });
 
-test('embedded pubkey matches tauri.conf.json', () => {
-  const conf = JSON.parse(readFileSync(new URL('../../src-tauri/tauri.conf.json', import.meta.url)));
-  assert.equal(PUBKEY, conf.plugins.updater.pubkey);
+const tauriConf = JSON.parse(readFileSync(new URL('../../src-tauri/tauri.conf.json', import.meta.url)));
+const forkFeed = tauriConf.plugins.updater.endpoints.some(url => url.includes('/PedroBertoluchi/'));
+
+test('embedded pubkey matches tauri.conf.json', { skip: forkFeed && 'the fork signs its own app releases; the npx installer still installs upstream' }, () => {
+  assert.equal(PUBKEY, tauriConf.plugins.updater.pubkey);
 });
