@@ -54,11 +54,9 @@ test('hovering Schedules lists the next runs of every project, soonest first, wi
   await expect(hover(page)).toHaveCount(0);
 });
 
-test('the hover shows an error as the last result and says so when nothing is scheduled', async ({ page }) => {
+test('the hover says so when nothing is scheduled', async ({ page }) => {
+  await page.addInitScript(() => { (window as any).__schedules = []; });
   await open(page);
-  await page.evaluate(() => { (window as any).__schedules = []; });
-  await page.reload();
-  await expect(prompt(page)).toBeEnabled();
   await trigger(page).hover();
   await expect(hover(page)).toContainText('Nothing is scheduled to run.');
 });
