@@ -180,6 +180,7 @@ export const CATALOG: Record<string, Spec> = {
   },
   list_subagents: { family: 'task', icon: 'bot', verbs: ['Listing subagents', 'Listed subagents'], card: itemsCard('subagents', ['name'], ['prompt']) },
   create_worktree: { family: 'task', icon: 'worktree', verbs: ['Creating worktree', 'Created worktree'], row: f => ({ chip: chip(field(f, 'branch'), 'branch') }), card: taskCard },
+  create_project: { family: 'task', icon: 'folder', verbs: ['Registering project', 'Registered project'], row: f => ({ object: basename(field(f, 'path')) }), card: rowOnly },
   list_projects: { family: 'task', icon: 'folder', verbs: ['Listing projects', 'Listed projects'], card: itemsCard('projects', ['name'], ['path']) },
 
   vm_list: {
