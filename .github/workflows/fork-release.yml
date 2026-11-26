@@ -1,0 +1,114 @@
+name: Fork release
+# Merges the newest upstream vX.Y.Z tag into this fork's bertoluchi branch and publishes
+# bertoluchi-vX.Y.Z, the Windows installer the fork's in-app updater reads (latest.json).
+on:
+  schedule:
+    - cron: '0 */3 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Rebuild and republish even if the release already exists'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: fork-release
+  cancel-in-progress: false
+env:
+  UPSTREAM: https://github.com/aicodeking/pandacode
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      skip: ${{ steps.sync.outputs.skip }}
+      tag: ${{ steps.sync.outputs.tag }}
+      version: ${{ steps.sync.outputs.version }}
+      sha: ${{ steps.sync.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: { ref: bertoluchi, fetch-depth: 0 }
+      - name: Merge the newest upstream release
+        id: sync
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          LATEST=$(git ls-remote --tags --refs "$UPSTREAM" 'v*' | sed 's#.*refs/tags/##' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          [ -n "$LATEST" ] || { echo "::error::No vX.Y.Z tag found on $UPSTREAM"; exit 1; }
+          VERSION=${LATEST#v}
+          echo "Newest upstream release: $LATEST"
+          if [ "$FORCE" != true ] && gh release view "bertoluchi-$LATEST" >/dev/null 2>&1; then
+            echo "Release bertoluchi-$LATEST already exists; nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name PedroBertoluchi
+          git config user.email PedroBertoluchi@users.noreply.github.com
+          git fetch --no-tags "$UPSTREAM" "refs/tags/$LATEST:refs/tags/$LATEST"
+          BEFORE=$(git rev-parse HEAD)
+          if ! git merge --no-edit --no-commit "$LATEST"; then
+            echo "::error::Merging $LATEST into bertoluchi conflicts in: $(git diff --name-only --diff-filter=U | tr '\n' ' '). Resolve it by merging the tag into bertoluchi by hand and pushing."
+            exit 1
+          fi
+          # The workflow token cannot change workflow files; the fork keeps its own.
+          git rm -rq --ignore-unmatch .github/workflows
+          git checkout "$BEFORE" -- .github/workflows
+          if [ -f .git/MERGE_HEAD ]; then git commit -q --no-edit; fi
+          for found in "$(node -p "require('./src-tauri/tauri.conf.json').version")" "$(node -p "require('./package.json').version")" "$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)"; do
+            [ "$found" = "$VERSION" ] || { echo "::error::App version $found does not match upstream $VERSION after the merge."; exit 1; }
+          done
+          git push origin HEAD:bertoluchi
+          { echo "skip=false"; echo "tag=$LATEST"; echo "version=$VERSION"; echo "sha=$(git rev-parse HEAD)"; } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: sync
+    if: needs.sync.outputs.skip != 'true'
+    runs-on: windows-2022
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      TAG: bertoluchi-${{ needs.sync.outputs.tag }}
+      VERSION: ${{ needs.sync.outputs.version }}
+      SHA: ${{ needs.sync.outputs.sha }}
+      RELEASE_TARGET: windows-x86_64
+      TRANSCRIBE_CMAKE_ARGS: -DTRANSCRIBE_X86_CONSERVATIVE=ON -DGGML_SSE42=ON -DGGML_AVX=ON -DGGML_F16C=ON
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: { ref: '${{ needs.sync.outputs.sha }}' }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: { node-version: '22', cache: npm }
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with: { toolchain: stable, targets: x86_64-pc-windows-msvc }
+      - run: npm ci
+      - name: Build installer
+        shell: bash
+        run: node scripts/release/build.mjs
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Publish the release
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="release/$VERSION"
+          asset=PandaCode-Windows-x64-setup.exe
+          [ -s "$dir/$asset" ] && [ -s "$dir/$asset.sig" ] || { echo "::error::$dir is missing $asset or its .sig"; exit 1; }
+          if [ -s "releases/$VERSION.md" ]; then cp "releases/$VERSION.md" "$RUNNER_TEMP/notes.md"; else echo "PandaCode $VERSION (fork build)" > "$RUNNER_TEMP/notes.md"; fi
+          node --input-type=module -e "
+            import { readFile, writeFile } from 'node:fs/promises';
+            import { updaterManifest } from './scripts/release/common.mjs';
+            const [dir, version, notes, tag] = process.argv.slice(1);
+            const manifest = updaterManifest(version, await readFile(notes, 'utf8'), { 'windows-x86_64': await readFile(dir + '/PandaCode-Windows-x64-setup.exe.sig', 'utf8') });
+            for (const platform of Object.values(manifest.platforms)) platform.url = platform.url.replace('/download/v' + version + '/', '/download/' + tag + '/');
+            await writeFile(dir + '/latest.json', JSON.stringify(manifest, null, 2) + '\n');
+          " "$dir" "$VERSION" "$RUNNER_TEMP/notes.md" "$TAG"
+          grep -q "/download/$TAG/" "$dir/latest.json"
+          if gh release view "$TAG" >/dev/null 2>&1; then gh release delete "$TAG" --yes --cleanup-tag; fi
+          gh release create "$TAG" "$dir/$asset" "$dir/$asset.sig" "$dir/latest.json" --target "$SHA" --title "PandaCode $VERSION (fork)" --notes-file "$RUNNER_TEMP/notes.md" --latest
