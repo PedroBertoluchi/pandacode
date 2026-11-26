@@ -1764,7 +1764,7 @@ struct InvokeCall {
 /// tab, whatever the frontend asks. `tray_seen` stays allowed, so a task opened in a tab
 /// clears its unseen badge in the menu bar.
 fn web_blocked_command(command: &str) -> bool {
-    const DESKTOP_ONLY: [&str; 33] = [
+    const DESKTOP_ONLY: [&str; 34] = [
         "browser_open",
         "browser_inspect",
         "browser_bounds",
@@ -1798,6 +1798,7 @@ fn web_blocked_command(command: &str) -> bool {
         "crash_report_reveal",
         "open_support",
         "open_external_url",
+        "schedules_windows",
     ];
     DESKTOP_ONLY.contains(&command) || ["overlay_", "plugin:"].iter().any(|prefix| command.starts_with(prefix))
 }
