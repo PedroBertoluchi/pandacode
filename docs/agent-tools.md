@@ -21,6 +21,8 @@ authenticated, run-local MCP bridge.
 
 `pandacode_suggest_feature` (title, description) lets a standalone task or team lead suggest a feature of PandaCode itself: it only shows the user a card in the thread (the text should be general, with no project paths, code, names or secrets), needs no approval, and is a no-op once the user turns the cards off; see [Feature requests](feature-requests.md).
 
+`pandacode_create_task` also accepts an optional `projectId` (from `pandacode_list_projects`) to create the task in another project, with the current harness, model and mode, and an optional `start` to start it right away with its description as the first message.
+
 Task operations remain within the current project. File previews use the task's
 checkout and existing native path validation. Creating a worktree creates a task
 under its original project. Starting another agent uses the same admission and
