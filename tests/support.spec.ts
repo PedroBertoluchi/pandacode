@@ -124,6 +124,7 @@ test('Settings shows an About section with the version and GitHub links', async 
   const about = settings.locator('.settings-about');
   await expect(about).toBeVisible();
   await expect(about.locator('.settings-about-version')).toHaveText('Version Preview');
+  await expect(about.locator('.settings-about-fork')).toHaveText('Fork build · PedroBertoluchi/pandacode · merges each upstream release within the hour');
   const urls = await about.locator('[data-action="open-url"]').evaluateAll(nodes => nodes.map(node => (node as HTMLElement).dataset.url));
   expect(urls).toEqual(expect.arrayContaining([
     'https://github.com/aicodeking/pandacode',
