@@ -19,7 +19,7 @@ test.describe('leader tree', () => {
     await expect(row.locator('.lead-progress')).toHaveText('1 of 6');
     const states = await lead(page, 'leadtree-lead').locator('.lead-child').evaluateAll(rows => rows.map(r => (r as HTMLElement).dataset.state));
     expect(states).toEqual(['done', 'failed', 'running', 'waiting', 'queued', 'running']);
-    await expect(lead(page, 'leadtree-lead').locator('.lead-limit')).toHaveText('2 running at once (limit 2)');
+    await expect(lead(page, 'leadtree-lead').locator('.lead-limit')).toHaveText('2 of 2 workers running');
     const colour = (state: string) => lead(page, 'leadtree-lead').locator(`.lead-child[data-state="${state}"] .lead-dot`).first().evaluate(dot => getComputedStyle(dot).backgroundColor);
     const colours = await Promise.all(['running', 'waiting', 'done', 'queued', 'failed'].map(colour));
     expect(new Set(colours).size).toBe(5);
@@ -40,7 +40,7 @@ test.describe('leader tree', () => {
     await expect(tree.locator('.lead-child')).toHaveCount(3);
     await expect(tree.locator('.lead-kind').first()).toHaveAttribute('aria-label', 'subagent');
     await expect(lead(page, 'leadtree-lead').locator('.lead-kind').first()).toHaveAttribute('aria-label', 'worker');
-    await expect(tree.locator('.lead-limit')).toHaveText('1 running');
+    await expect(tree.locator('.lead-limit')).toHaveText('1 subagent running');
   });
 
   test('the chevron folds the workers and the choice is remembered', async ({ page }) => {
@@ -63,6 +63,37 @@ test.describe('leader tree', () => {
     await child.click();
     await expect(page.locator('.task-item.selected')).toHaveAttribute('data-id', 'leadtree-lead');
     await expect(page.locator('.architect-panel')).toBeVisible();
+  });
+
+  test('keyboard: arrows fold a leader, children are stops with Enter, progress has a name', async ({ page }) => {
+    await open(page);
+    const row = page.locator('#navigation .task-item[data-id="leadtree-lead"]');
+    await expect(row).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator('#navigation .task-row:has(.task-item[data-id="leadtree-lead"]) .lead-progress')).toHaveAttribute('role', 'img');
+    await row.focus();
+    await page.keyboard.press('ArrowLeft');
+    await expect(row).toHaveAttribute('aria-expanded', 'false');
+    await expect(lead(page, 'leadtree-lead')).toHaveCount(0);
+    await page.keyboard.press('ArrowRight');
+    await expect(row).toHaveAttribute('aria-expanded', 'true');
+    await row.focus();
+    await page.keyboard.press('ArrowDown');
+    await expect(lead(page, 'leadtree-lead').locator('.lead-child').first()).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.architect-panel')).toBeVisible();
+  });
+
+  test('the title keeps its width: progress sits on the second line and a child shows its context', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 820 });
+    await open(page);
+    const item = page.locator('#navigation .task-item[data-id="leadtree-lead"]');
+    const title = item.locator('.task-title');
+    expect((await title.boundingBox())!.width).toBeGreaterThan(90);
+    const [progress, name] = await Promise.all([item.locator('.lead-progress').boundingBox(), title.boundingBox()]);
+    expect(progress!.y).not.toBeCloseTo(name!.y, -1);
+    await expect(lead(page, 'leadtree-lead').locator('.lead-context').first()).toBeVisible();
   });
 
   for (const scheme of ['light', 'dark'] as const) for (const width of [1280, 900]) {

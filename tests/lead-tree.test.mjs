@@ -45,8 +45,11 @@ test('the tree counts every child kind, orders workers before subagents and name
   assert.deepEqual(tree.children.map(c => c.id), ['a', 'b', 'c', 's1']);
   assert.deepEqual([tree.running, tree.queued, tree.done, tree.failed, tree.total], [1, 1, 1, 1, 4]);
   assert.equal(progressText(tree), '1 of 4');
-  assert.equal(limitText(tree), '1 running at once (limit 2)');
-  assert.equal(limitText({ ...tree, limit: 0 }), '1 running at once (no limit)');
+  assert.equal(limitText(tree), '1 of 2 workers running');
+  assert.equal(limitText({ ...tree, limit: 0 }), '1 workers running (no limit)');
+  const mixed = buildLeadTree({ team: team([worker('a', 'running'), worker('b', 'running')]), agents: [agent('s', 'running'), agent('t', 'completed')], now, lookup });
+  assert.equal(limitText(mixed), '2 of 2 workers running · 1 subagent');
+  assert.equal(mixed.running, 3, 'the tree still counts every live row; only the limit text separates them');
 });
 
 test('no worker and no recent subagent means no tree; old settled subagents drop out, running ones stay', () => {
@@ -56,7 +59,11 @@ test('no worker and no recent subagent means no tree; old settled subagents drop
   const tree = buildLeadTree({ agents: [old, agent('live', 'running', { updatedAt: now - SUBAGENT_RECENT_MS * 3 })], now, lookup });
   assert.deepEqual(tree.children.map(c => c.id), ['live']);
   assert.equal(tree.limit, null);
-  assert.equal(limitText(tree), '1 running');
+  assert.equal(limitText(tree), '1 subagent running');
+});
+
+test('only a paused team says Paused; a stopped or interrupted one says Stopped', () => {
+  for (const [status, label] of [['paused', 'Paused'], ['interrupted', 'Stopped'], ['completed', 'Stopped']]) assert.equal(workerNode(team([], { status }), worker('run', 'running'), lookup).label, label);
 });
 
 test('sub-workers of a worker are not direct children of the lead', () => {
@@ -75,5 +82,5 @@ test('context shows a percentage only when the window is known, and a missing fa
   const [w, s] = tree.children;
   assert.equal(childTip(w, now, duration), ['run (worker)', 'Working for 3m', 'Model: SONNET · high', 'Context: 25% (50k of 200k)', 'Now: Do run'].join('\n'));
   assert.equal(childTip(s, now, duration), ['s (subagent)', 'Working for 1m', 'Now: Look at the index'].join('\n'));
-  assert.match(leadTip('Lead', tree, { model: 'Opus', context: null }), /^Lead\nLeader: 0 of 2 done\n2 running\n2 running at once \(limit 2\)\nModel: Opus$/);
+  assert.match(leadTip('Lead', tree, { model: 'Opus', context: null }), /^Lead\nLeader: 0 of 2 done\n2 running\n1 of 2 workers running · 1 subagent\nModel: Opus$/);
 });

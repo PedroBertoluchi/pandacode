@@ -1535,7 +1535,7 @@ async fn sidebar_subagents(state: State<'_, AppState>) -> Result<Vec<SidebarSuba
     let mut all = Vec::new();
     for session_id in tasks {
         // A task deleted meanwhile has no children to draw.
-        let Ok(rows) = task_subagents(&state, &session_id) else { continue };
+        let Ok(rows) = task_subagent_rows(&state, &session_id, false) else { continue };
         if !rows.is_empty() { all.push(SidebarSubagents { session_id, rows }); }
     }
     Ok(all)
@@ -1558,11 +1558,16 @@ fn live_subagents(state: &AppState, session_id: &str) -> Result<Option<Arc<Mutex
 /// A task's children as list rows. Live snapshots are read after the store, so stale disk data
 /// can't beat an in-memory update or the final flush, and neither lock waits on the other.
 fn task_subagents(state: &AppState, session_id: &str) -> Result<Vec<subagent_state::SubagentRow>> {
+    task_subagent_rows(state, session_id, true)
+}
+
+/// `settle` retries an unfinished completion write; a listing passes false and only reads.
+fn task_subagent_rows(state: &AppState, session_id: &str, settle: bool) -> Result<Vec<subagent_state::SubagentRow>> {
     let live = {
         // Held only when no run owns the task, so none can start while its children are settled.
         let agents = lock_agents(&state.agents).map_err(|error| error.to_string())?;
         let live = agents.get(session_id).map(|agent| agent.subagents.clone());
-        if live.is_none() {
+        if live.is_none() && settle {
             let store = state.store.lock().map_err(|error| error.to_string())?;
             let task = store.session(session_id)?;
             // A mirror's children run on its host: they settle there while its turn is open.

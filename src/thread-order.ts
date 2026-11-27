@@ -3,7 +3,7 @@ import './thread-order.css';
 export { compareManual as compareThreadOrder } from './sidebar-sort';
 
 /** Everything in the list that takes focus: rows, folder and section headings, "Show more". */
-const STOPS = '.task-item, .folder-heading, .section-toggle, .section-fold, .folder-more';
+const STOPS = '.task-item, .lead-child, .folder-heading, .section-toggle, .section-fold, .folder-more';
 function stops(nav: HTMLElement): HTMLElement[] {
   return [...nav.querySelectorAll<HTMLElement>(STOPS)].filter(item => !item.closest('[hidden]') && item.getClientRects().length > 0);
 }
@@ -143,6 +143,12 @@ export function bindThreadReordering(nav: HTMLElement, options: {
     // → opens and ← closes a folder or section from its heading.
     if ((event.key === 'ArrowRight' || event.key === 'ArrowLeft') && target.matches('.folder-heading, .section-toggle, .section-fold')) {
       if ((target.getAttribute('aria-expanded') === 'true') !== (event.key === 'ArrowRight')) { event.preventDefault(); target.click(); }
+      return;
+    }
+    // → opens and ← folds the workers under a leader's row.
+    if ((event.key === 'ArrowRight' || event.key === 'ArrowLeft') && !event.altKey && !event.metaKey && !event.ctrlKey && target.matches('.task-item[aria-expanded]')) {
+      const toggle = target.parentElement?.querySelector<HTMLButtonElement>('.lead-toggle');
+      if (toggle && (target.getAttribute('aria-expanded') === 'true') !== (event.key === 'ArrowRight')) { event.preventDefault(); toggle.click(); }
       return;
     }
     const row = target.closest<HTMLElement>('.task-item');

@@ -19,6 +19,8 @@ export interface TreeNode {
 export interface LeadTree {
   children: TreeNode[];
   running: number; waiting: number; queued: number; done: number; failed: number; total: number;
+  /** Running workers (what the limit counts) and live subagents (running or asking), kept apart. */
+  workersRunning: number; subagentsLive: number;
   /** Workers at once for a team (0 or absent: no limit); null for a task with subagents only. */
   limit: number | null;
 }
@@ -44,7 +46,7 @@ export function workerNode(team: TeamSnapshot, worker: TeamWorker, lookup: Worke
   if (worker.status === 'completed') { state = 'done'; label = 'Done'; }
   else if (worker.status === 'failed') { state = 'failed'; label = 'Failed'; }
   else if (worker.status === 'stopped') { state = 'queued'; label = 'Stopped'; }
-  else if (!teamActive(team)) { state = 'queued'; label = 'Paused'; }
+  else if (!teamActive(team)) { state = 'queued'; label = team.status === 'paused' ? 'Paused' : 'Stopped'; }
   else if (asking) { state = 'waiting'; label = 'Needs you'; }
   else if (worker.status === 'running') { state = 'running'; label = 'Working'; }
   else if (worker.status === 'parked') { state = 'queued'; label = 'Waiting on sub-workers'; }
@@ -85,17 +87,20 @@ export function buildLeadTree({ team, agents = [], now, lookup }: LeadTreeInput)
   if (!children.length) return null;
   const count = (state: TreeState) => children.filter(child => child.state === state).length;
   return {
-    children, running: count('running'), waiting: count('waiting'), queued: count('queued'), done: count('done'), failed: count('failed'), total: children.length,
+    children, workersRunning: workers.filter(node => node.state === 'running').length, subagentsLive: recent.filter(node => node.state === 'running' || node.state === 'waiting').length,
+    running: count('running'), waiting: count('waiting'), queued: count('queued'), done: count('done'), failed: count('failed'), total: children.length,
     limit: team && workers.length ? team.config.maxParallel : null,
   };
 }
 
 /** "2 of 4": finished children out of all of them. */
 export const progressText = (tree: LeadTree): string => `${tree.done} of ${tree.total}`;
-/** "2 running at once (limit 2)"; a task with subagents only has no limit to name. */
+/** "2 of 2 workers running · 1 subagent": only workers count against the limit; subagents are named apart. */
 export function limitText(tree: LeadTree): string {
-  if (tree.limit === null) return `${tree.running} running`;
-  return `${tree.running} running at once (${tree.limit > 0 ? `limit ${tree.limit}` : 'no limit'})`;
+  const subagents = tree.subagentsLive ? `${tree.subagentsLive} subagent${tree.subagentsLive === 1 ? '' : 's'}` : '';
+  if (tree.limit === null) return subagents ? `${subagents} running` : '0 running';
+  const workers = tree.limit > 0 ? `${tree.workersRunning} of ${tree.limit} workers running` : `${tree.workersRunning} workers running (no limit)`;
+  return [workers, subagents].filter(Boolean).join(' · ');
 }
 
 export const contextPercent = (use: ContextUse | null): number | null => use?.contextWindow ? Math.min(100, Math.round(use.usedTokens / use.contextWindow * 100)) : null;

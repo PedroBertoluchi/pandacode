@@ -3,7 +3,7 @@ import { childTip, contextPercent, leadTip, limitText, progressText, type Contex
 
 /** The crown and "N of M" that join a leader's title. */
 export const crownHtml = (tree: LeadTree): string => `<span class="lead-crown" aria-hidden="true">${icon('crown')}</span>`;
-export const progressHtml = (tree: LeadTree): string => `<span class="lead-progress" aria-label="${progressText(tree)} finished">${progressText(tree)}</span>`;
+export const progressHtml = (tree: LeadTree): string => `<span class="lead-progress" role="img" aria-label="${progressText(tree)} finished">${progressText(tree)}</span>`;
 /** Folds the children; sits left of the row, outside its button. */
 export const leadToggleHtml = (taskId: string, title: string, open: boolean): string =>
   `<button type="button" class="lead-toggle" data-action="toggle-lead" data-task="${escape(taskId)}" tabindex="-1" aria-expanded="${open}" aria-label="${open ? 'Hide' : 'Show'} workers of ${escape(title)}" title="${open ? 'Hide' : 'Show'} workers">${icon('chevron')}</button>`;
@@ -15,9 +15,9 @@ const lineSvg = (last: boolean): string => `<svg class="lead-line" viewBox="0 0 
 function childHtml(taskId: string, node: TreeNode, last: boolean, now: number, duration: (ms: number) => string): string {
   const live = node.startedAt !== null;
   const time = live && node.state === 'running' ? `<span class="lead-time task-runtime" data-started-at="${node.startedAt}">${duration(Math.max(0, now - node.startedAt!))}</span>` : node.state === 'running' ? '' : `<span class="lead-word">${escape(node.label)}</span>`;
-  // Context shows on the row only once it runs short; the hover has it always.
+  // Context shows on the row whenever the app holds it, warned once it runs short.
   const percent = contextPercent(node.context);
-  const context = percent !== null && percent >= 70 ? `<span class="lead-context" data-high>${percent}%</span>` : '';
+  const context = percent !== null ? `<span class="lead-context"${percent >= 70 ? ' data-high' : ''} title="Context used">${percent}%</span>` : '';
   return `<button type="button" class="lead-child" data-state="${node.state}" data-kind="${node.kind}" data-action="open-lead-child" data-task="${escape(taskId)}" data-child="${escape(node.id)}" tabindex="-1" data-tip="${escape(childTip(node, now, duration))}" aria-label="${escape(`${node.name}, ${node.kind}, ${node.label}`)}">${lineSvg(last)}<span class="lead-dot" aria-hidden="true"></span><span class="lead-name">${escape(node.name)}</span><span class="lead-kind" role="img" aria-label="${node.kind}" title="${node.kind}">${icon(node.kind === 'worker' ? 'team' : 'branch')}</span>${context}${time}</button>`;
 }
 

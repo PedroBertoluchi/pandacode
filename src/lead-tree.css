@@ -11,8 +11,8 @@ html[data-theme="dark"] .sidebar{--crown:#e8b84a}
 .sidebar .task-row:has(>.task-item.has-tree)>.task-item{min-height:var(--tree-row)}
 .tip-bubble{white-space:pre-line}
 
-.sidebar .lead-tree{container-type:inline-size;display:flex;flex-direction:column;margin:0 0 4px 17px}
-.sidebar .lead-child{position:relative;display:flex;align-items:center;gap:6px;width:100%;min-height:26px;padding:0 8px 0 18px;border:0;border-radius:var(--ds-control-radius);background:transparent;color:var(--text);font-size:var(--type-body);text-align:left;min-width:0}
+.sidebar .lead-tree{container-type:inline-size;display:flex;flex-direction:column;margin:0 0 4px 14px}
+.sidebar .lead-child{position:relative;display:flex;align-items:center;gap:5px;width:100%;min-height:26px;padding:0 6px 0 16px;border:0;border-radius:var(--ds-control-radius);background:transparent;color:var(--text);font-size:var(--type-body);text-align:left;min-width:0}
 .sidebar .lead-child:hover,.sidebar .lead-child:focus-visible{background:var(--raised)}
 .sidebar .lead-child{--line:var(--muted)}
 .sidebar .lead-child[data-state=running]{--line:var(--accent)}
@@ -36,6 +36,6 @@ html[data-theme="dark"] .sidebar{--crown:#e8b84a}
 .sidebar .lead-child[data-state=running] .lead-time{color:var(--accent-ink)}
 .sidebar .lead-child[data-state=waiting] .lead-word{color:var(--ds-warn)}
 .sidebar .lead-child[data-state=failed] .lead-word{color:var(--ds-danger)}
-@container (max-width:190px){.sidebar .lead-kind{display:none}}
-.sidebar .lead-limit{padding:2px 8px 0 18px;font-size:var(--type-caption);line-height:var(--type-caption-leading);color:var(--faint)}
+@container (max-width:210px){.sidebar .lead-kind{display:none}}
+.sidebar .lead-limit{padding:2px 8px 0 16px;font-size:var(--type-caption);line-height:var(--type-caption-leading);color:var(--faint)}
 @media(prefers-reduced-motion:reduce){.sidebar .lead-child .lead-line path,.sidebar .lead-child .lead-dot{animation:none}.sidebar .lead-toggle .icon{transition:none}}
