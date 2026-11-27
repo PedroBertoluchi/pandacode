@@ -306,6 +306,22 @@ impl Store {
         rows.map(|row| row.map_err(|error| error.to_string())).collect()
     }
 
+    /// Tasks (never a team's workers) whose children changed since `since`, newest first: the
+    /// sidebar draws each as a tree. The covering index answers it without reading any snapshot.
+    pub fn recent_subagent_sessions(&self, since: i64, limit: usize) -> Result<Vec<String>> {
+        let mut query = self
+            .db
+            .prepare_cached(
+                "SELECT session_id FROM subagents WHERE updated_at>=?1 AND session_id NOT IN (SELECT session_id FROM architect_workers)
+                 GROUP BY session_id ORDER BY MAX(updated_at) DESC LIMIT ?2",
+            )
+            .map_err(|error| error.to_string())?;
+        let rows = query
+            .query_map(params![since, limit as i64], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?;
+        rows.map(|row| row.map_err(|error| error.to_string())).collect()
+    }
+
     /// One saved child in full.
     pub fn subagent(&self, sid: &str, id: &str) -> Result<Option<crate::providers::SubagentActivity>> {
         let content: Option<String> = self

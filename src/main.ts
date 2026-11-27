@@ -146,6 +146,9 @@ import { attachmentChips, parseAttachments } from './message-attachments';
 import { compactSublines, infoMark, installTooltips } from './tooltip';
 import { isMac, shortcut } from './platform';
 import { createGoalBanner, showGoalDialog, showCommandCenter, type GoalState, type GoalAction, type CommandPanel } from './command-center';
+import { buildLeadTree, type ContextUse, type TreeAgent, type WorkerContext } from './lead-tree.ts';
+import { crownHtml, leadTipFor, leadToggleHtml, progressHtml, treeHtml } from './lead-tree-view';
+import './lead-tree.css';
 import { LEAD_RETRY, teamActive, teamHeldUntil, type TeamSnapshot, type TeamEvent, type TeamLibrary, type TeamProfile, type TeamConfig, type WorkerProfile } from './architect-types';
 import type { ArchitectView } from './architect';
 import { syncOverlayContext } from './overlay-client';
@@ -290,6 +293,44 @@ function chooseInspector(open: boolean): boolean {
 type ThreadPanel = { workspace: string; tab: typeof state.inspectorTab; folders: string[]; file: string; kind: typeof state.selectedKind; staged: boolean; context?: FileLinkContext; browserUrl: string };
 const threadPanels = new Map<string, ThreadPanel>();
 const teams = new Map<string, TeamSnapshot | null>();
+/** Leaders whose workers the sidebar folds, kept across launches. */
+const COLLAPSED_LEADS_KEY = 'pandacode.sidebar.collapsedLeads';
+const collapsedLeads = readCollapsed(localStorage, COLLAPSED_LEADS_KEY);
+/** Harness subagents per task and the context stored for each worker session: what the leader trees read. */
+const leadAgents = new Map<string, Map<string, TreeAgent>>();
+const workerContexts = new Map<string, ContextUse>();
+const treeLookup: WorkerContext = {
+  needsInput: sessionId => architectView?.needsInput(sessionId) ?? false,
+  modelName: worker => { const provider = state.providers.find(p => p.id === worker.provider); return provider?.models.find(model => model.id === worker.model)?.name ?? fallbackModel(worker.provider, worker.model).name; },
+  context: sessionId => workerContexts.get(sessionId) ?? null,
+};
+const leadTreeFor = (task: Session) => buildLeadTree({ team: teams.get(task.id), agents: [...leadAgents.get(task.id)?.values() ?? []], now: Date.now(), lookup: treeLookup });
+function noteLeadAgent(sessionId: string, value: unknown): void {
+  const agent = value as Partial<TreeAgent> & { tools?: { name: string; status: string }[] } | null;
+  if (!agent || typeof agent.id !== 'string' || !['running', 'waiting', 'completed', 'failed', 'stopped'].includes(agent.status as string)) return;
+  const known = leadAgents.get(sessionId)?.get(agent.id);
+  const step = agent.tools?.filter(tool => tool.status === 'running').pop()?.name ?? known?.step ?? null;
+  const next: TreeAgent = { id: agent.id, name: String(agent.name ?? ''), status: agent.status as TreeAgent['status'], startedAt: Number(agent.startedAt) || known?.startedAt || Date.now(), updatedAt: Number(agent.updatedAt) || Date.now(), prompt: agent.prompt || known?.prompt, step };
+  let task = leadAgents.get(sessionId); if (!task) leadAgents.set(sessionId, task = new Map());
+  task.set(next.id, next);
+  if (!known || known.status !== next.status) scheduleNavigation();
+}
+let leadChildrenLoaded = false;
+/** Once at launch: every leader's team and subagents, stored context included. Events keep them current after that. */
+async function loadLeadChildren(): Promise<void> {
+  if (leadChildrenLoaded) return;
+  leadChildrenLoaded = true;
+  try {
+    const [{ teams: led, contexts }, rows] = await Promise.all([
+      call<{ teams: TeamSnapshot[]; contexts: { sessionId: string; usedTokens: number; contextWindow: number | null }[] }>('architect_lead_teams'),
+      call<{ sessionId: string; rows: TreeAgent[] }[]>('sidebar_subagents'),
+    ]);
+    for (const team of led) if (!teams.has(team.sessionId)) teams.set(team.sessionId, team);
+    for (const item of contexts) workerContexts.set(item.sessionId, { usedTokens: item.usedTokens, contextWindow: item.contextWindow });
+    for (const { sessionId, rows: agents } of rows) { const task = leadAgents.get(sessionId) ?? new Map<string, TreeAgent>(); for (const agent of agents) if (!task.has(agent.id)) task.set(agent.id, agent); leadAgents.set(sessionId, task); }
+    scheduleNavigation();
+  } catch (cause) { leadChildrenLoaded = false; report(cause); }
+}
 let architectView: ArchitectView | undefined;
 let architectLoading: Promise<ArchitectView> | undefined;
 let architectSetupCleanup: (() => void) | undefined;
@@ -608,7 +649,7 @@ async function showTeamMenu(anchor: HTMLElement): Promise<void> {
 async function autoTeamConfig(base?: TeamConfig): Promise<TeamConfig> {
   const [library, { roster, catalog }] = await Promise.all([base ? Promise.resolve(null) : call<TeamLibrary>('architect_profiles'), Promise.resolve(knownProviders()).then(providers => installedCatalog(providers, loadModels))]);
   const limits = base ?? library?.lastSetup?.config;
-  return { auto: true, workers: roster, catalog, maxParallel: limits?.maxParallel ?? 0, maxRounds: limits?.maxRounds ?? 8, maxAssignments: limits?.maxAssignments ?? 24, workspace: 'shared', summaryLimit: limits?.summaryLimit ?? 3072 };
+  return { auto: true, workers: roster, catalog, maxParallel: limits?.maxParallel ?? library?.defaultParallel ?? 2, maxRounds: limits?.maxRounds ?? 8, maxAssignments: limits?.maxAssignments ?? 24, workspace: 'shared', summaryLimit: limits?.summaryLimit ?? 3072 };
 }
 /** Warms Panda Router's profiler when a team starts; failures only reach the console. */
 function prepareModelRouting(): void {
@@ -2203,6 +2244,7 @@ function taskSignal(s: Session, now: number): { status: string; statusLabel: str
   return { status, statusLabel, word };
 }
 function renderNavigation(): void {
+  if (state.sessions.length) void loadLeadChildren();
   queueMicrotask(() => tiles.refresh());
   // The crash notice's agents sentence goes once no task is left Interrupted.
   tasksChanged();
@@ -2254,6 +2296,8 @@ function renderNavigation(): void {
     const { status, statusLabel, word } = taskSignal(s, now);
     const unread = seen.has(s.id) && s.id !== state.sessionId;
     const checkout = s.worktreePath ? s.worktreePath.split(/[\\/]/).filter(Boolean).pop() ?? p?.name ?? 'Project' : p?.name ?? 'Project';
+    const tree = leadTreeFor(s), open = Boolean(tree) && (filtering || !collapsedLeads.has(s.id));
+    const crown = '', progress = tree ? crownHtml(tree) + progressHtml(tree) : '';
     const link = s.pullRequest ?? s.issue;
     const linkMark = link ? `<span class="task-link ${link.kind === 'pull' ? 'pull' : 'issue'}" title="${escape(`${link.kind === 'pull' ? 'Pull request' : 'Issue'} #${link.number}: ${link.title}`)}">#${link.number}</span>` : '';
     // Worktree tasks show their branch; the worktree mark keeps its accessible name either way.
@@ -2264,7 +2308,7 @@ function renderNavigation(): void {
     const signals = `${status ? `<span class="task-indicator ${status}" role="img" aria-label="${statusLabel}" title="${statusLabel}"></span>` : unread ? '<span class="task-indicator unread" role="img" aria-label="Unread" title="Unread"></span>' : '<span class="task-indicator" aria-hidden="true"></span>'}${word ? `<span class="task-status ${status}" aria-hidden="true">${word}</span>` : ''}${age && !word ? `<span class="task-age${elapsed ? ' task-runtime' : ''}"${elapsed ? ` data-started-at="${startedAt}"` : ''} title="${elapsed ? `Working for ${elapsed}` : `Last message: ${escape(new Date(activityAt!).toLocaleString())}`}">${age}</span>` : ''}${wakeGlyph(s.id)}`;
     const stage = taskStage(s), done = stage === 'completed';
     const selected = s.id === state.sessionId;
-    const button = `<button class="task-item${card ? '' : ' task-oneline'}${selected ? ' selected' : ''}${unread ? ' unread' : ''}" data-action="select-task" data-id="${escape(s.id)}" data-activity="${activeTask(s, now) ? 'active' : 'inactive'}" draggable="true" data-reorderable="${reorderable}" data-pinned="${Boolean(s.pinned)}" tabindex="-1" ${reorderable ? 'aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"' : ''} ${selected ? 'aria-current="page"' : ''} aria-description="${shortProvider(s.provider)}" title="${escape([s.title, showProject || card ? chatTask(s) ? 'Chat' : p?.name ?? '' : '', s.worktreeBranch ?? ''].filter(Boolean).join('\n'))}">`;
+    const button = `<button class="task-item${card ? '' : ' task-oneline'}${tree ? ' has-tree' : ''}${selected ? ' selected' : ''}${unread ? ' unread' : ''}" data-action="select-task" data-id="${escape(s.id)}" data-activity="${activeTask(s, now) ? 'active' : 'inactive'}" draggable="true" data-reorderable="${reorderable}" data-pinned="${Boolean(s.pinned)}" tabindex="-1" ${reorderable ? 'aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"' : ''} ${selected ? 'aria-current="page"' : ''} aria-description="${shortProvider(s.provider)}" ${tree ? `data-tip="${escape(leadTipFor(s.title, tree, { model: fallbackModel(s.provider, s.model).name, effort: s.reasoningEffort, context: s.contextUsage }))}"` : `title="${escape([s.title, showProject || card ? chatTask(s) ? 'Chat' : p?.name ?? '' : '', s.worktreeBranch ?? ''].filter(Boolean).join('\n'))}"`}>`;
     const pin = s.pinned ? `<span class="task-pin" role="img" aria-label="Pinned">${icon('pin')}</span>` : '';
     const projectLabel = `<span class="task-project">${escape(p?.name ?? 'Project')}</span>`;
     // Row actions sit beside the row's button (buttons cannot nest), over its right edge. They
@@ -2273,14 +2317,14 @@ function renderNavigation(): void {
     const tick = busy ? '' : `<button class="task-action task-check${done ? ' checked' : ''}" data-action="${done ? 'sidebar-reopen' : 'sidebar-complete'}" data-task="${id}" tabindex="-1" aria-label="${done ? 'Reopen' : 'Settle'}: ${title}" title="${done ? 'Reopen task' : 'Settle task'}">${icon('check')}</button>`;
     // Delete and the rest sit in the row's menu.
     const extra = `<button class="task-action task-more" data-action="sidebar-more" data-task="${id}" tabindex="-1" aria-haspopup="menu" aria-label="Task actions: ${title}" title="Task actions">${icon('more')}</button>`;
-    const wrap = (content: string) => `<div class="task-row${card ? '' : ' task-row-oneline'}" id="task-row-${id}" data-stage="${stage}">${content}<span class="task-actions">${tick}${extra}</span></div>`;
+    const wrap = (content: string) => `<div class="task-row${card ? '' : ' task-row-oneline'}" id="task-row-${id}" data-stage="${stage}">${content}<span class="task-actions">${tick}${extra}</span>${tree ? leadToggleHtml(s.id, s.title, open) : ''}</div>${tree && open ? treeHtml(s.id, s.title, tree, now, formatDuration) : ''}`;
     // One line: the title, then the worktree mark, linked PR or issue, status, age and harness.
     // A flat list names each row's project: its icon first, its name after the title.
-    if (!card && showProject) return wrap(`${button}<span class="task-line task-top">${projectAppIcon(s.projectId, p?.name ?? '')}<span class="task-title">${title}</span><span class="task-project-name" aria-hidden="true">${escape(chatTask(s) ? 'Chat' : p?.name ?? 'Project')}</span>${worktreeMark}${linkMark}${pin}${projectLabel}${signals}${providerLogo(s.provider, 'task-provider')}</span></button>`);
-    if (!card) return wrap(`${button}<span class="task-line task-top"><span class="task-title">${title}</span>${worktreeMark}${linkMark}${pin}${projectLabel}${signals}${providerLogo(s.provider, 'task-provider')}</span></button>`);
+    if (!card && showProject) return wrap(`${button}<span class="task-line task-top">${projectAppIcon(s.projectId, p?.name ?? '')}${crown}<span class="task-title">${title}</span>${progress}<span class="task-project-name" aria-hidden="true">${escape(chatTask(s) ? 'Chat' : p?.name ?? 'Project')}</span>${worktreeMark}${linkMark}${pin}${projectLabel}${signals}${providerLogo(s.provider, 'task-provider')}</span></button>`);
+    if (!card) return wrap(`${button}<span class="task-line task-top">${crown}<span class="task-title">${title}</span>${progress}${worktreeMark}${linkMark}${pin}${projectLabel}${signals}${providerLogo(s.provider, 'task-provider')}</span></button>`);
     // Two lines: where (app icon, checkout, status, age), then what (title, branch, PR, harness).
     return wrap(`${button}<span class="task-line task-head">${projectAppIcon(s.projectId, p?.name ?? '')}<span class="task-checkout">${escape(checkout)}</span>${pin}${signals}</span>`
-      + `<span class="task-line task-top"><span class="task-title">${title}</span>${branch}${linkMark}${projectLabel}${providerLogo(s.provider, 'task-provider')}</span></button>`);
+      + `<span class="task-line task-top">${crown}<span class="task-title">${title}</span>${progress}${branch}${linkMark}${projectLabel}${providerLogo(s.provider, 'task-provider')}</span></button>`);
   };
   const single = Boolean(state.projectFilter);
   const heading = (key: string, label: string, count: number) => `<div class="group-heading section-heading">${label}<span class="section-count">${count}</span></div>`;
@@ -2319,7 +2363,8 @@ function renderNavigation(): void {
   const chats = single ? [] : grouping ? grouped.filter(projectless) : visible.filter(s => !s.pinned && chatTask(s));
   const others = single ? [] : visible.filter(s => !s.pinned && !chatTask(s));
   const listed = (key: string, tasks: Session[], showProject: boolean) => () => {
-    const { rows, more } = capped(key, tasks, sidebarSort.perProject);
+    // A leader sits at the top of its group, with its workers under it.
+    const { rows, more } = capped(key, [...tasks].sort((a, b) => Number(Boolean(leadTreeFor(b))) - Number(Boolean(leadTreeFor(a)))), sidebarSort.perProject);
     return rows.map(s => row(s, false, manual, showProject)).join('') + more;
   };
   const chatGroup = section('chats', 'Chats', 'Chats', chats.length, listed('chats', chats, false));
@@ -6609,7 +6654,8 @@ function onAgent(event: AgentEvent): void {
   if (event.kind === 'turn_changes') { if (event.sessionId === state.sessionId) void projectRunner.refresh(); completeTurnChanges(event); return; }
   if (event.kind === 'turn_start') return;
   if (event.kind === 'commands_changed') { if (event.sessionId === state.sessionId) slashPicker?.refresh(true); return; }
-  if (event.kind === 'subagent') { subagents.receive(event.sessionId, event.data); return; }
+  if (event.kind === 'subagent') { subagents.receive(event.sessionId, event.data); noteLeadAgent(event.sessionId, event.data); return; }
+  if (event.kind === 'usage' && !state.sessions.some(task => task.id === event.sessionId)) { const use = parseContextUsage(event.data); if (use && teams.size) workerContexts.set(event.sessionId, use); }
   // Hosts send `team` (a changed worker row) only for mirrors; it is not a local event kind.
   const workerRow = (event.kind as string) === 'team';
   if ((workerRow || event.kind === 'done' && teams.get(event.sessionId)) && state.sessions.find(task => task.id === event.sessionId)?.remoteDevice) refreshMirrorTeam(event.sessionId);
@@ -9202,6 +9248,20 @@ async function action(name: string, element: HTMLElement): Promise<void> {
     }
     case 'open-turn-diff': await showTurnDiff(element); break;
     case 'select-task': await selectSession(element.dataset.id!); break;
+    case 'toggle-lead': {
+      const id = element.dataset.task!;
+      if (!collapsedLeads.delete(id)) collapsedLeads.add(id);
+      try { localStorage.setItem(COLLAPSED_LEADS_KEY, JSON.stringify([...collapsedLeads])); } catch { /* per-launch preference only */ }
+      renderNavigation(); break;
+    }
+    case 'open-lead-child': {
+      const taskId = element.dataset.task!, childId = element.dataset.child!;
+      await selectSession(taskId);
+      if (taskId !== state.sessionId) break;
+      if (element.dataset.kind === 'worker') { const view = await ensureArchitectView(); if (taskId === state.sessionId) await view.openWorker(childId); }
+      else await subagents.showAgent(childId);
+      break;
+    }
     case 'sidebar-complete': sidebarTaskAction('complete', element.dataset.task!); break;
     case 'sidebar-reopen': sidebarTaskAction('reopen', element.dataset.task!); break;
     case 'sidebar-delete': sidebarTaskAction('delete', element.dataset.task!); break;

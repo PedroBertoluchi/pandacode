@@ -20,6 +20,7 @@ export function mountAgentTeams(host: HTMLElement, options: AgentTeamsOptions): 
   host.innerHTML = `<div class="settings-group agent-teams">
     <div class="setting-row"><div><strong>Classic team setup</strong><small>Team opens Architect & workers.</small></div><input type="checkbox" class="settings-switch" aria-label="Classic team setup" ${classicTeamSetup() ? 'checked' : ''}></div>
     <div class="setting-row"><div><strong>Agent teams</strong><small>Pick one in the model picker.</small></div><button type="button" class="secondary-button agent-team-new">${icon('plus')}New team</button></div>
+    <div class="setting-row"><div><strong>Workers at once</strong><small>New teams run this many workers together; the rest queue. 0 is unlimited. Saved teams keep theirs.</small></div><input type="number" class="agent-parallel" aria-label="Workers at once" min="0" max="64" step="1" value="2"></div>
     <div class="setting-row"><div><strong>Lead guidance</strong><small>Added to the architect's built-in rules for every team.</small></div><button type="button" class="secondary-button agent-guidance-save">Save</button></div>
     <div class="agent-guidance-row"><textarea class="agent-guidance" aria-label="Lead guidance" rows="3" spellcheck="false" placeholder="Leave empty for the built-in rules. For example: you only lead; never edit files yourself."></textarea></div>
     <p class="agent-guidance-status" role="status" hidden></p>
@@ -44,6 +45,7 @@ export function mountAgentTeams(host: HTMLElement, options: AgentTeamsOptions): 
   const leadEffort = editor.querySelector<HTMLSelectElement>('.agent-team-lead-effort')!;
   const error = host.querySelector<HTMLElement>('.agent-team-error')!;
   const guidance = host.querySelector<HTMLTextAreaElement>('.agent-guidance')!;
+  const parallel = host.querySelector<HTMLInputElement>('.agent-parallel')!;
   const guidanceSave = host.querySelector<HTMLButtonElement>('.agent-guidance-save')!;
   const guidanceStatus = host.querySelector<HTMLElement>('.agent-guidance-status')!;
   let guidanceEdited = false;
@@ -61,6 +63,7 @@ export function mountAgentTeams(host: HTMLElement, options: AgentTeamsOptions): 
       library = await options.call<TeamLibrary>('architect_profiles');
       if (disposed) return;
       if (!guidanceEdited) guidance.value = library.leadGuidance ?? '';
+      parallel.value = String(library.defaultParallel ?? 2);
       renderList();
     } catch (cause) { if (!disposed) showError(cause); }
   }
@@ -149,7 +152,7 @@ export function mountAgentTeams(host: HTMLElement, options: AgentTeamsOptions): 
     if (!included.length || !lead) { showError(new Error('Choose at least one model for this team.')); return; }
     busy = true; error.hidden = true;
     try {
-      const setup = namedTeamSetup(teamName, lead, included, editing?.setup.config ?? library?.lastSetup?.config);
+      const setup = namedTeamSetup(teamName, lead, included, editing?.setup.config ?? library?.lastSetup?.config, library?.defaultParallel);
       library = await options.call<TeamLibrary>('architect_save_profile', { id: editing?.id ?? null, name: teamName, setup });
       if (disposed) return;
       closeEditor(); renderList(); create.focus();
@@ -183,6 +186,12 @@ export function mountAgentTeams(host: HTMLElement, options: AgentTeamsOptions): 
     else if (target!.closest('[data-team-delete]')) void remove(team.id);
   });
   guidance.addEventListener('input', () => { guidanceEdited = true; guidanceStatus.hidden = true; });
+  parallel.addEventListener('change', () => {
+    const count = parallel.valueAsNumber;
+    if (!Number.isSafeInteger(count) || count < 0 || count > 64) { parallel.value = String(library?.defaultParallel ?? 2); showError(new Error('Choose a whole number from 0 (unlimited) to 64.')); return; }
+    error.hidden = true;
+    void options.call<TeamLibrary>('architect_set_default_parallel', { count }).then(saved => { if (!disposed) library = saved; }).catch(cause => { if (!disposed) { parallel.value = String(library?.defaultParallel ?? 2); showError(cause); } });
+  });
   guidanceSave.addEventListener('click', () => {
     if (busy) return;
     busy = true; error.hidden = true; guidanceSave.disabled = true;

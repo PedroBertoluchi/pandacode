@@ -79,7 +79,14 @@ pub struct TeamProfile {
     pub setup: TeamSetup,
     pub updated_at: i64,
 }
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+/// Workers a new team runs at once until Settings says otherwise; 0 is unlimited.
+pub const DEFAULT_PARALLEL: usize = 2;
+/// The most a user may set (the form allows any positive count; this only bounds a typo).
+const MAX_DEFAULT_PARALLEL: usize = 64;
+fn default_parallel() -> usize {
+    DEFAULT_PARALLEL
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TeamLibrary {
     pub enabled: bool,
@@ -89,6 +96,22 @@ pub struct TeamLibrary {
     /// Lead guidance for every team that does not set its own, from Settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lead_guidance: Option<String>,
+    /// Workers at once for teams with no saved setup to inherit (Settings → Agents). A saved
+    /// setup keeps its own limit; 0 means unlimited.
+    #[serde(default = "default_parallel")]
+    pub default_parallel: usize,
+}
+impl Default for TeamLibrary {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            last_setup: None,
+            active_profile_id: None,
+            profiles: Vec::new(),
+            lead_guidance: None,
+            default_parallel: DEFAULT_PARALLEL,
+        }
+    }
 }
 
 pub(crate) fn initialize(store: &Store) -> Result<()> {
@@ -399,6 +422,24 @@ pub(crate) fn set_lead_guidance(
     }
     write(store, &library)?;
     Ok(library)
+}
+/// Replaces the limit new teams start with. Teams that already have a setup keep theirs.
+pub(crate) fn set_default_parallel(store: &Store, count: usize) -> Result<TeamLibrary> {
+    if count > MAX_DEFAULT_PARALLEL {
+        return Err(format!("Workers at once must be between 0 (unlimited) and {MAX_DEFAULT_PARALLEL}."));
+    }
+    let mut library = read(store)?;
+    library.default_parallel = count;
+    write(store, &library)?;
+    Ok(library)
+}
+#[tauri::command]
+pub async fn architect_set_default_parallel(
+    state: State<'_, AppState>,
+    count: usize,
+) -> Result<TeamLibrary> {
+    let store = state.store.lock().map_err(|e| e.to_string())?;
+    set_default_parallel(&store, count)
 }
 #[tauri::command]
 pub async fn architect_profiles(state: State<'_, AppState>) -> Result<TeamLibrary> {
