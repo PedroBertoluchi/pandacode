@@ -133,8 +133,11 @@ impl Server {
             context: server_context,
         })
     }
+    /// `alwaysLoad` keeps the bridge's tools in the model's list. Without it Claude Code
+    /// defers them behind its tool search, and the agent rarely searches for an optional
+    /// metadata tool such as `pandacode_title`, so sidebar titles fell back to the cut prompt.
     pub(super) fn claude_config(&self) -> Value {
-        json!({"mcpServers":{SERVER_NAME:{"type":"http","url":format!("http://{}/mcp",self.authority),"headers":{"Authorization":format!("Bearer {}",self.token)}}}})
+        json!({"mcpServers":{SERVER_NAME:{"type":"http","url":format!("http://{}/mcp",self.authority),"headers":{"Authorization":format!("Bearer {}",self.token)},"alwaysLoad":true}}})
     }
     pub(super) fn pi_config(&self) -> Value {
         json!({"url":format!("http://{}/mcp",self.authority),"authorization":format!("Bearer {}",self.token)})
@@ -850,6 +853,7 @@ mod tests {
         };
         let server = Server::start_for_run(placeholder, "task".into(), Arc::new(|_| {}), "ask").await.unwrap().unwrap();
         let address = server.claude_config();
+        assert_eq!(address["mcpServers"][SERVER_NAME]["alwaysLoad"], true, "Claude Code must not defer the title tool behind its tool search");
         let call = json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":crate::session_titles::TOOL,"arguments":{"title":"Topic"}}});
         let (_, before) = request(&server, call.clone(), "").await;
         assert_eq!(before["result"]["isError"], true);

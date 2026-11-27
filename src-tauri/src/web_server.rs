@@ -1861,7 +1861,7 @@ const WEB_ALLOWED_COMMANDS: &[&str] = &[
     "architect_start", "architect_control", "architect_worker_messages", "architect_team_messages", "task_goal",
     "codex_command", "codex_jobs", "set_task_preference", "fork_codex_task", "fork_session_at_message",
     "get_message_content", "archive_codex_task", "export_task", "save_task_export", "start_harness_terminal",
-    "list_projects", "add_project", "remove_project", "relink_project", "list_sessions", "pin_session",
+    "list_projects", "project_hint_folders", "add_project", "remove_project", "relink_project", "list_sessions", "pin_session",
     "dismiss_error_messages", "reorder_sessions", "get_task", "create_session", "create_board_task",
     "update_task_details", "set_task_stage", "start_task", "configure_session", "set_reasoning_effort",
     "update_session", "delete_session_with_attachment_cleanup", "chat_create", "chat_cleanup", "get_messages",
