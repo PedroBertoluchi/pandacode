@@ -796,7 +796,7 @@ const contextControl = createContextControl({
     const s = session();
     if (!s || s.id !== sessionId) return null;
     const stream = state.streams.get(s.id);
-    return { usage: stream?.contextUsage ?? s.contextUsage ?? null, lastResponseAt: Math.max(s.lastResponseAt ?? 0, stream?.lastResponseAt ?? 0) || null, running: isRunning(s.id), provider: s.provider, lead: Boolean(teams.get(s.id)) };
+    return { usage: stream?.contextUsage ?? s.contextUsage ?? null, lastResponseAt: Math.max(s.lastResponseAt ?? 0, stream?.lastResponseAt ?? 0) || null, running: isRunning(s.id), provider: s.provider, lead: Boolean(teams.get(s.id)), remote: Boolean(s.remoteDevice) };
   },
   handoff: (sessionId, messageId) => forkAtMessage(sessionId, messageId, undefined, true),
 });

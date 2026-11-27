@@ -155,6 +155,15 @@ fn hand_off_refuses_a_team_lead() {
 }
 
 #[test]
+fn hand_off_waits_for_a_running_turn() {
+    let (store, source) = fixture("claude");
+    let last = append(&store, &source.id, "assistant", "Partial");
+    store.db.execute("UPDATE sessions SET status='running' WHERE id=?1", [&source.id]).unwrap();
+    assert_eq!(hand_off(&store, &source.id, last).unwrap_err(), WAIT_FOR_TURN);
+    assert_eq!(all_messages(&store, &source.id).len(), 1, "nothing was forked or marked");
+}
+
+#[test]
 fn inclusive_forks_are_isolated_complete_and_repeatable_across_pages() {
     let (store, source) = fixture("codex");
     let mut boundary = 0;

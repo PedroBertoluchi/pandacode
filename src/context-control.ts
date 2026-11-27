@@ -10,7 +10,7 @@ import type { ContextUsage } from './types';
    with the counts, a recommendation and a button that hands the thread to a new chat. */
 
 export type ContextStats = { handoffs: number; compactions: number; lastMessageId: number | null };
-export type ContextSnapshot = { usage: ContextUsage | null; lastResponseAt: number | null; running: boolean; provider: string; lead: boolean };
+export type ContextSnapshot = { usage: ContextUsage | null; lastResponseAt: number | null; running: boolean; provider: string; lead: boolean; remote: boolean };
 export type ContextControlHost = {
   call<T>(command: string, args?: Record<string, unknown>): Promise<T>;
   notifyError(text: string): void;
@@ -101,7 +101,8 @@ export function createContextControl(host: ContextControlHost) {
     const cacheLine = !cache ? 'Not tracked for this harness' : cache.state === 'cold' ? `${mark}Cold` : cache.live ? `${mark}Warm, a turn is running` : `${mark}Warm, ${formatCountdown(cache.remainingMs)} left`;
     const note = !cache ? 'Only Claude Code reports how its prompt cache is used.' : cache.estimated ? 'Cache lifetime guessed at 5 minutes: the harness has not said which tier it used, so a longer one can keep it warm longer.' : 'Cache lifetime reported by the harness.';
     const count = (value: number | undefined) => (stats === undefined ? '…' : stats === null ? 'Unavailable' : String(value));
-    const canHand = Boolean(stats?.lastMessageId) && !handingOff && !lead;
+    const busy = Boolean(snap?.running), remote = Boolean(snap?.remote);
+    const canHand = Boolean(stats?.lastMessageId) && !handingOff && !lead && !busy && !remote;
     const set = (selector: string, value: string) => { const el = panel!.querySelector(selector); if (el && el.textContent !== value) el.textContent = value; };
     if (!panel.querySelector('.ctx-rows')) {
       panel.innerHTML = `<header class="ctx-head"><div class="ctx-title" id="ctx-title">Context</div></header>
@@ -128,7 +129,7 @@ export function createContextControl(host: ContextControlHost) {
     const handoff = panel.querySelector<HTMLButtonElement>('.ctx-handoff')!;
     handoff.classList.toggle('ds-btn-primary', advice.action === 'handoff' && canHand);
     handoff.setAttribute('aria-disabled', canHand ? 'false' : 'true');
-    handoff.title = lead ? LEAD_TIP : canHand ? 'Opens a new task in this project that starts with the recent messages of this one; this one stays as it is.' : stats === undefined ? 'Loading…' : 'Nothing to hand off yet.';
+    handoff.title = lead ? LEAD_TIP : remote ? 'This task runs on another computer; hand it off there.' : busy ? 'Wait for the turn to finish.' : canHand ? 'Opens a new task in this project that starts with the recent messages of this one; this one stays as it is.' : stats === undefined ? 'Loading…' : 'Nothing to hand off yet.';
   }
 
   function place(anchor: HTMLElement): void {

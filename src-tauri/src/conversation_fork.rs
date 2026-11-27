@@ -115,6 +115,7 @@ fn copy(store: &Store, source_id: &str, message_id: i64, exclusive: bool) -> Res
 }
 
 pub(crate) const LEAD_HANDS_OFF: &str = "A team lead hands off by itself.";
+pub(crate) const WAIT_FOR_TURN: &str = "Wait for the turn to finish.";
 const NEW_CHAT_NOTICE: &str = "Handed off to a new chat. It starts with the recent messages of this conversation (up to 200 entries, 64 KiB), not a summary.";
 
 /// The composer's "Hand off to new chat": a fork at the newest message whose first prompt carries the
@@ -128,7 +129,11 @@ pub(crate) fn hand_off(store: &Store, source_id: &str, message_id: i64) -> Resul
     if lead {
         return Err(LEAD_HANDS_OFF.into());
     }
-    let provider = store.session(source_id)?.provider;
+    let source = store.session(source_id)?;
+    if matches!(source.status.as_str(), "running" | "waiting") {
+        return Err(WAIT_FOR_TURN.into());
+    }
+    let provider = source.provider;
     let fork = at_message(store, source_id, message_id)?;
     let notice = serde_json::json!({"fromProvider": provider, "toProvider": provider, "summary": NEW_CHAT_NOTICE});
     store.message(source_id, "handoff", &notice.to_string())?;
