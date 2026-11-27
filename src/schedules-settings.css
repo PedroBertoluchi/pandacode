@@ -4,6 +4,7 @@
 .schedules-limit,.schedules-field input:not([type=checkbox]),.schedules-field select,.schedules-field textarea{height:32px;padding-block:0;padding-inline-start:10px;border-radius:var(--ds-control-radius);border:0;background-color:var(--ds-card-inset);color:var(--text);font:inherit;font-size:var(--type-body);font-weight:var(--type-body-weight)}
 .schedules-limit,.schedules-field input:not([type=checkbox]),.schedules-field select:where([multiple],[size]:not([size="1"])),.schedules-field textarea{padding-inline-end:10px}
 .schedules .setting-row .schedules-limit{width:5rem;height:32px;accent-color:auto;font-variant-numeric:tabular-nums}
+.schedules .setting-row .schedules-windows-path{width:min(22rem,100%);height:32px;padding-inline-end:10px;font-variant-numeric:normal}
 :is(.schedules-when,.workflow-when) .schedules-field input[type=time]{flex:none;width:9rem}
 .schedules :is(input,select,textarea,button):focus-visible{outline:2px solid var(--focus);outline-offset:1px}
 

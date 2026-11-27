@@ -5,7 +5,7 @@ Agents and the user can schedule wake-ups and timed messages for any task (threa
 ## Module map
 
 - Native: `src-tauri/src/schedules.rs` (types, validation, IPC commands), `src-tauri/src/schedules/firing.rs` (the clock loop, delivery, `run_finished`), `src-tauri/src/schedules/tools.rs` (agent tools), `src-tauri/src/schedules/tests.rs`. Clock arithmetic is shared with bots: `next_run_on`/`next_run_zoned` in `src-tauri/src/bots/schedule.rs`.
-- Window: the IPC contract is `src/schedules-api.ts` (keep it in step with `schedules.rs`); the thread panel is `src/schedules-thread.ts`, Settings → Schedules is `src/schedules-settings.ts`, and preview mocks are in `src/preview-schedules.ts`.
+- Window: the Schedules panel is `src/schedules-panel.ts` (see Schedules panel below); the IPC contract is `src/schedules-api.ts` (keep it in step with `schedules.rs`); the thread panel is `src/schedules-thread.ts`, Settings → Schedules is `src/schedules-settings.ts`, and preview mocks are in `src/preview-schedules.ts`.
 
 ## Tables (schema 35)
 
@@ -15,7 +15,7 @@ Agents and the user can schedule wake-ups and timed messages for any task (threa
 
 ## Commands
 
-`schedules_list {sessionId?}`, `schedule_create {input}`, `schedule_update {scheduleId, input}`, `schedule_set_enabled {scheduleId, enabled}`, `schedule_delete {scheduleId}`, `schedule_run_now {scheduleId}` (returns a `ScheduleRun`), `schedule_snooze {scheduleId, minutes}`, `schedule_runs {sessionId?, scheduleId?, limit}`, `scheduler_settings`, `scheduler_set_settings {settings}`. Every mutation emits `schedules-changed {sessionId | null}`.
+`schedules_list {sessionId?}`, `schedule_create {input}`, `schedule_update {scheduleId, input}`, `schedule_set_enabled {scheduleId, enabled}`, `schedule_delete {scheduleId}`, `schedule_run_now {scheduleId}` (returns a `ScheduleRun`), `schedule_snooze {scheduleId, minutes}`, `schedule_runs {sessionId?, scheduleId?, limit}`, `scheduler_settings`, `scheduler_set_settings {settings}`, `schedules_windows` (read only, see Schedules panel). Every mutation emits `schedules-changed {sessionId | null}`.
 
 Validation rules:
 - Title: at most 120 characters. When it is empty, it defaults from the prompt.
@@ -97,4 +97,10 @@ Limits and approvals:
 
 ## Settings
 
-`agentsMaySchedule` (default on), `askBeforeMessagingOtherTasks` (on), `paused` (off), `agentLimitPerTask` (10, 0 to 100).
+`agentsMaySchedule` (default on), `askBeforeMessagingOtherTasks` (on), `paused` (off), `agentLimitPerTask` (10, 0 to 100), `windowsSchedulesPath` (empty; an absolute path to a `.json` file, edited in Settings → Schedules).
+
+## Schedules panel
+
+The sidebar's Schedules entry opens a dialog (`src/schedules-panel.ts`, ordering and tones in `src/schedules-panel-model.ts`) and, on hover or focus, a popover with the next 10 enabled schedules of every project: title, project, cadence, next run in local time and the last run's result (OK, Error, Skipped or Not run yet). The dialog has a PandaCode tab (every schedule, switched on first, a switch and Open last task, which opens `lastTaskId`, or the receiving thread when there is none) and a Windows tab. Both use the commands above; the dialog's Settings button opens Settings → Schedules.
+
+The Windows tab is read only. `schedules_windows` reads the one file saved in `windowsSchedulesPath` (`src-tauri/src/schedules/windows_tasks.rs`; the webview never passes a path; at most 4 MB, UTF-8 with or without a byte-order mark) and returns `{configured, generated, tasks, warning}`. An empty path means `configured` is false and the tab is hidden. A missing, oversized or malformed file returns a `warning` and no tasks, never an error. The file is `{"gerado": "YYYY-MM-DDTHH:MM:SS", "tarefas": [{"nome", "faz", "ia", "marca", "quando", "proxima", "ultima", "resultado", "comando"}]}` with every field a string: `ia` is `script`, `abre IA` or `IA só com novidade`; `marca` is empty, `apagar`, `quebrado` or `desligada`; `resultado` is `ok` or `erro N`. A `quebrado` mark or an `erro` result is red, `desligada` is grey, and the command shows when hovering the name. The browser preview serves `window.__windowsSchedules` for the tab.

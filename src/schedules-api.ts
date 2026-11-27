@@ -95,6 +95,31 @@ export interface SchedulerSettings {
   paused: boolean;
   /** Active agent-created schedules allowed per thread. */
   agentLimitPerTask: number;
+  /** Absolute path of the JSON list of Windows scheduled tasks; empty hides the Windows tab. */
+  windowsSchedulesPath: string;
+}
+
+export interface WindowsTask {
+  name: string;
+  does: string;
+  /** "script", "abre IA" or "IA só com novidade". */
+  ai: string;
+  /** "", "apagar", "quebrado" or "desligada". */
+  mark: string;
+  when: string;
+  next: string;
+  last: string;
+  /** "ok" or "erro N". */
+  result: string;
+  command: string;
+}
+
+/** The saved file, read natively. `warning` is set when it is missing or invalid; `configured` is false while no path is saved. */
+export interface WindowsSchedules {
+  configured: boolean;
+  generated: string;
+  tasks: WindowsTask[];
+  warning: string | null;
 }
 
 export const schedulesApi = {
@@ -110,6 +135,7 @@ export const schedulesApi = {
     call<ScheduleRun[]>('schedule_runs', { sessionId: filter.sessionId ?? null, scheduleId: filter.scheduleId ?? null, limit: filter.limit ?? 50 }),
   settings: () => call<SchedulerSettings>('scheduler_settings'),
   setSettings: (settings: SchedulerSettings) => call<SchedulerSettings>('scheduler_set_settings', { settings }),
+  windows: () => call<WindowsSchedules>('schedules_windows'),
 };
 
 /** A one-off that ran, or a schedule that used all its runs: done, not paused. Resuming it is refused natively. */

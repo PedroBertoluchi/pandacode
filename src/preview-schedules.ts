@@ -15,7 +15,7 @@ export interface PreviewSchedulesHost {
 const MINUTE = 60_000;
 let schedules: TaskSchedule[] | null = null;
 let runs: ScheduleRun[] = [];
-let settings: SchedulerSettings = { agentsMaySchedule: true, askBeforeMessagingOtherTasks: true, paused: false, agentLimitPerTask: 10 };
+let settings: SchedulerSettings = { agentsMaySchedule: true, askBeforeMessagingOtherTasks: true, paused: false, agentLimitPerTask: 10, windowsSchedulesPath: '' };
 
 function seed(host: PreviewSchedulesHost): TaskSchedule[] {
   const w = window as any;
@@ -131,7 +131,12 @@ export async function invokeSchedules<T>(command: string, args: Record<string, a
     }
     case 'schedule_runs': return runs.filter(r => (!args.sessionId || r.sessionId === args.sessionId) && (!args.scheduleId || r.scheduleId === args.scheduleId)).slice(0, args.limit ?? 50) as T;
     case 'scheduler_settings': return settings as T;
-    case 'scheduler_set_settings': settings = { ...args.settings }; host.emit('schedules-changed', { sessionId: null }); return settings as T;
+    case 'schedules_windows': {
+      const path = settings.windowsSchedulesPath.trim();
+      if (!path) return { configured: false, generated: '', tasks: [], warning: null } as T;
+      return ((window as any).__windowsSchedules ?? { configured: true, generated: '', tasks: [], warning: `The Windows schedules file was not found: ${path}` }) as T;
+    }
+    case 'scheduler_set_settings': settings = { ...args.settings, windowsSchedulesPath: String(args.settings.windowsSchedulesPath ?? '').trim() }; host.emit('schedules-changed', { sessionId: null }); return settings as T;
   }
   throw new Error(`Preview has no ${command}.`);
 }
