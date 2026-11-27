@@ -5,6 +5,14 @@ use super::sql::{IMPORTED_TASK_SQL, PROJECT_LINKS_SQL, PROMPT_ACTIVITY_SQL, SEAR
 use super::{now, ContextUsage, Message, MessagePage, Result, Session, Store, TaskLink, DEFAULT_PERMISSION_MODE, MAX_DISMISS_ERROR_IDS, SESSION_NOT_FOUND};
 use rusqlite::{params, OptionalExtension};
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextStats {
+    pub handoffs: i64,
+    pub compactions: i64,
+    pub last_message_id: Option<i64>,
+}
+
 impl Store {
     /// Prompts sent from PandaCode per hour and agent since `since_ms`, for the usage calendar.
     pub fn prompt_activity(&self, since_ms: i64) -> Result<Vec<(i64, String, u64)>> {
@@ -305,6 +313,29 @@ impl Store {
             .query_map(params![sid, fragment, before, limit], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))
             .map_err(|e| e.to_string())?;
         rows.collect::<std::result::Result<_, _>>().map_err(|e| e.to_string())
+    }
+    /// What the composer's Context control shows besides the token reading: how many times this
+    /// thread's context was handed to another harness (the partial handoff index) or compacted by
+    /// the harness (the `Compact context` tool rows both Claude Code and Codex record), and the
+    /// newest saved user or assistant message, which a handoff to a new chat forks at. Rows copied in
+    /// by a fork or an import are older than the task itself and the fork's own "Forked conversation"
+    /// notice is not a switch, so neither counts: the numbers are what happened in this task.
+    pub fn context_stats(&self, sid: &str) -> Result<ContextStats> {
+        self.require_session(sid)?;
+        let handoffs = self.db
+            .query_row("SELECT COUNT(*) FROM messages WHERE session_id=?1 AND role='handoff' AND created_at>=(SELECT created_at FROM sessions WHERE id=?1) AND instr(content,'Forked conversation.')=0", [sid], |row| row.get(0))
+            .map_err(|e| e.to_string())?;
+        let compactions = self.db
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE session_id=?1 AND role='tool' AND instr(content,'\"name\":\"Compact context\"')>0 AND instr(content,'\"status\":\"completed\"')>0 AND created_at>=(SELECT created_at FROM sessions WHERE id=?1)",
+                [sid],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        let last_message_id = self.db
+            .query_row("SELECT MAX(id) FROM messages WHERE session_id=?1 AND role IN ('user','assistant')", [sid], |row| row.get(0))
+            .map_err(|e| e.to_string())?;
+        Ok(ContextStats { handoffs, compactions, last_message_id })
     }
     /// RETURNING ties the timer to this exact insert even with concurrent tasks.
     pub fn start_turn_message(&self, sid: &str, content: &str) -> Result<i64> {

@@ -114,6 +114,56 @@ fn forks_before_handoffs_keep_historical_authors_and_the_current_harness() {
 }
 
 #[test]
+fn hand_off_forks_with_the_messages_and_marks_only_the_source() {
+    let (store, source) = fixture("claude");
+    append(&store, &source.id, "user", "Original request");
+    let last = append(&store, &source.id, "assistant", "Original response");
+    let fork = hand_off(&store, &source.id, last).unwrap();
+    let kept = all_messages(&store, &fork.id);
+    assert_eq!(kept.iter().map(|m| m.content.as_str()).collect::<Vec<_>>(), ["Original request", "Original response"]);
+    let marked = all_messages(&store, &source.id);
+    assert_eq!(marked.last().unwrap().role, "handoff");
+    assert!(marked.last().unwrap().content.contains("not a summary"));
+    assert_eq!(store.context_stats(&source.id).unwrap().handoffs, 1);
+    assert_eq!(store.context_stats(&fork.id).unwrap().handoffs, 0, "the fork starts its own count");
+}
+
+#[test]
+fn a_fork_counts_only_what_happened_after_it() {
+    let (store, source) = fixture("claude");
+    append(&store, &source.id, "user", "Original request");
+    store.message(&source.id, "handoff", r#"{"fromProvider":"codex","toProvider":"claude","summary":"Switched"}"#).unwrap();
+    store.tool_message(&source.id, "compaction:a", r#"{"type":"tool_activity","version":1,"id":"compaction:a","name":"Compact context","status":"completed","input":"","output":""}"#).unwrap();
+    let last = append(&store, &source.id, "assistant", "Original response");
+    assert_eq!(store.context_stats(&source.id).unwrap(), storage::ContextStats { handoffs: 1, compactions: 1, last_message_id: Some(last) });
+    std::thread::sleep(std::time::Duration::from_millis(3));
+    let fork = at_message(&store, &source.id, last).unwrap();
+    assert!(all_messages(&store, &fork.id).iter().any(|m| m.role == "handoff"), "the handoff row was copied");
+    let stats = store.context_stats(&fork.id).unwrap();
+    assert_eq!((stats.handoffs, stats.compactions), (0, 0), "inherited rows are not new");
+    store.tool_message(&fork.id, "compaction:b", r#"{"type":"tool_activity","version":1,"id":"compaction:b","name":"Compact context","status":"completed","input":"","output":""}"#).unwrap();
+    assert_eq!(store.context_stats(&fork.id).unwrap().compactions, 1);
+}
+
+#[test]
+fn hand_off_refuses_a_team_lead() {
+    let (store, source) = fixture("claude");
+    let last = append(&store, &source.id, "assistant", "Plan");
+    store.db.execute("INSERT INTO architect_teams(session_id,content) VALUES(?1,'{}')", [&source.id]).unwrap();
+    assert_eq!(hand_off(&store, &source.id, last).unwrap_err(), LEAD_HANDS_OFF);
+    assert_eq!(all_messages(&store, &source.id).len(), 1, "nothing was forked or marked");
+}
+
+#[test]
+fn hand_off_waits_for_a_running_turn() {
+    let (store, source) = fixture("claude");
+    let last = append(&store, &source.id, "assistant", "Partial");
+    store.db.execute("UPDATE sessions SET status='running' WHERE id=?1", [&source.id]).unwrap();
+    assert_eq!(hand_off(&store, &source.id, last).unwrap_err(), WAIT_FOR_TURN);
+    assert_eq!(all_messages(&store, &source.id).len(), 1, "nothing was forked or marked");
+}
+
+#[test]
 fn inclusive_forks_are_isolated_complete_and_repeatable_across_pages() {
     let (store, source) = fixture("codex");
     let mut boundary = 0;

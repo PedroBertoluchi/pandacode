@@ -430,6 +430,24 @@ pub(super) async fn fork_session_at_message(
     Ok(task)
 }
 
+/// The composer's Context control: fork at the newest message and mark the source (`conversation_fork::hand_off`).
+#[tauri::command]
+pub(super) async fn handoff_to_new_chat(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    message_id: i64,
+) -> Result<Session> {
+    let store = state.store.clone();
+    let task = blocking(move || {
+        let store = store.lock().map_err(|e| e.to_string())?;
+        crate::conversation_fork::hand_off(&store, &session_id, message_id)
+    })
+    .await?;
+    let _ = app.emit("sessions-changed", ());
+    Ok(task)
+}
+
 #[tauri::command]
 pub(super) async fn get_message_content(
     state: State<'_, AppState>,

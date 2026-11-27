@@ -25,6 +25,25 @@ fn tool_records_containing_reads_only_this_sessions_tool_records() {
 }
 
 #[test]
+fn context_stats_counts_handoffs_and_completed_compactions_of_one_task() {
+    let (store, task) = empty_session();
+    let other = store.create_session(&task.project_id, "claude", "sonnet", "auto").unwrap();
+    assert_eq!(store.context_stats(&task.id).unwrap(), ContextStats { handoffs: 0, compactions: 0, last_message_id: None });
+    store.message(&task.id, "user", "first").unwrap();
+    store.message(&task.id, "handoff", r#"{"fromProvider":"claude","toProvider":"codex","summary":"Switched"}"#).unwrap();
+    let last = store.insert_message(&task.id, "assistant", "reply").unwrap();
+    store.tool_message(&task.id, "compaction:a", r#"{"type":"tool_activity","version":1,"id":"compaction:a","name":"Compact context","status":"completed","input":"","output":"Conversation context compacted."}"#).unwrap();
+    store.tool_message(&task.id, "item-2", r#"{"type":"tool_activity","version":1,"id":"item-2","name":"Compact context","status":"completed","input":"","output":""}"#).unwrap();
+    store.tool_message(&task.id, "item-3", r#"{"type":"tool_activity","version":1,"id":"item-3","name":"Compact context","status":"running","input":"","output":""}"#).unwrap();
+    store.tool_message(&task.id, "bash-1", r#"{"type":"tool_activity","version":1,"id":"bash-1","name":"Bash","status":"completed","input":"echo Compact context","output":""}"#).unwrap();
+    store.message(&other.id, "handoff", "{}").unwrap();
+    let stats = store.context_stats(&task.id).unwrap();
+    assert_eq!((stats.handoffs, stats.compactions), (1, 2), "{stats:?}");
+    assert_eq!(stats.last_message_id, Some(last));
+    assert!(store.context_stats("missing").is_err());
+}
+
+#[test]
 fn prompt_activity_counts_user_prompts_per_hour_and_agent() {
     let (store, task) = empty_session();
     store.message(&task.id, "user", "first").unwrap();

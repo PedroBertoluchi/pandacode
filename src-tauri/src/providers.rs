@@ -2102,6 +2102,8 @@ struct Protocol {
     mode_note: Option<String>,
     claude_input_tokens: Option<u64>,
     claude_output_tokens: u64,
+    /// The prompt-cache lifetime the last Claude message reported creating (1 hour or 5 minutes tier).
+    claude_cache_ttl_ms: Option<u64>,
     subagents: Option<subagents::Subagents>,
     goals: goals::Runtime,
 }
@@ -2259,6 +2261,7 @@ impl Protocol {
             mode_note: None,
             claude_input_tokens: None,
             claude_output_tokens: 0,
+            claude_cache_ttl_ms: None,
             subagents: Some(subagents::Subagents::default()),
             goals: goals::Runtime::default(),
         }
@@ -2307,6 +2310,12 @@ impl Protocol {
                     )
             });
             self.claude_output_tokens = 0;
+            let created = &usage["cache_creation"];
+            if created["ephemeral_1h_input_tokens"].as_u64().is_some_and(|tokens| tokens > 0) {
+                self.claude_cache_ttl_ms = Some(3_600_000);
+            } else if created["ephemeral_5m_input_tokens"].as_u64().is_some_and(|tokens| tokens > 0) {
+                self.claude_cache_ttl_ms = Some(300_000);
+            }
         }
         if let Some(output) = usage["output_tokens"].as_u64() {
             self.claude_output_tokens = output;
@@ -2316,6 +2325,11 @@ impl Protocol {
             .and_then(|input| input.checked_add(self.claude_output_tokens))
         {
             self.usage(used, None, step);
+            if let Some(ttl) = self.claude_cache_ttl_ms {
+                if let Some(data) = step.events.last_mut().filter(|event| event.kind == "usage").and_then(|event| event.data.as_mut()) {
+                    data["cacheTtlMs"] = ttl.into();
+                }
+            }
         }
     }
     fn kimi_config_options(&mut self, result: &Value) {
@@ -6501,6 +6515,20 @@ mod tests {
         let thinking = p.receive(json!({"id":5,"result":{}})).unwrap();
         assert_eq!(thinking.write[0]["params"]["configId"], "thinking");
         assert_eq!(thinking.write[0]["params"]["value"], "low");
+    }
+
+    #[test]
+    fn claude_usage_reports_the_cache_tier_it_created_and_keeps_it_for_later_deltas() {
+        let mut p = Protocol::new(config("claude"));
+        let start = |creation: Value| json!({"type":"stream_event","parent_tool_use_id":null,"event":{"type":"message_start","message":{"model":"actual","usage":{"input_tokens":10,"cache_read_input_tokens":100,"cache_creation_input_tokens":20,"cache_creation":creation,"output_tokens":1}}}});
+        let step = p.receive(start(json!({}))).unwrap();
+        assert!(step.events[0].data.as_ref().unwrap().get("cacheTtlMs").is_none(), "no tier reported, none claimed");
+        let step = p.receive(start(json!({"ephemeral_5m_input_tokens":20,"ephemeral_1h_input_tokens":0}))).unwrap();
+        assert_eq!(step.events[0].data.as_ref().unwrap()["cacheTtlMs"], 300_000);
+        let step = p.receive(start(json!({"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":20}))).unwrap();
+        assert_eq!(step.events[0].data.as_ref().unwrap()["cacheTtlMs"], 3_600_000);
+        let step = p.receive(json!({"type":"stream_event","event":{"type":"message_delta","usage":{"output_tokens":8}}})).unwrap();
+        assert_eq!(step.events[0].data.as_ref().unwrap()["cacheTtlMs"], 3_600_000, "later deltas keep the tier");
     }
 
     #[test]
