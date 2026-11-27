@@ -2,6 +2,7 @@
  * finished, is drawn with a crown and its children underneath. This is the data side, with no DOM: it maps what the
  * app already stores or streams (team snapshots, subagent rows, stored context) to rows. Nothing is estimated; a fact
  * the app does not hold (a subagent's model or cost) is left out. See docs/architect-workers.md. */
+import { contextPercent } from './context-status.ts';
 import { teamActive, type TeamSnapshot, type TeamWorker } from './architect-types.ts';
 
 export type TreeState = 'running' | 'waiting' | 'done' | 'queued' | 'failed';
@@ -103,7 +104,7 @@ export function limitText(tree: LeadTree): string {
   return [workers, subagents].filter(Boolean).join(' · ');
 }
 
-export const contextPercent = (use: ContextUse | null): number | null => use?.contextWindow ? Math.min(100, Math.round(use.usedTokens / use.contextWindow * 100)) : null;
+export { contextPercent };
 const tokens = (value: number): string => value >= 1_000_000 ? `${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M` : value >= 1000 ? `${Math.round(value / 1000)}k` : String(value);
 export function contextText(use: ContextUse | null): string | null {
   if (!use) return null;
