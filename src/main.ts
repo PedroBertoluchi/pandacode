@@ -324,9 +324,17 @@ let leadExpiry = 0;
 function scheduleLeadExpiry(): void {
   clearTimeout(leadExpiry); leadExpiry = 0;
   let next = Infinity;
-  for (const agents of leadAgents.values()) for (const agent of agents.values()) if (agent.status !== 'running' && agent.status !== 'waiting') next = Math.min(next, agent.updatedAt + SUBAGENT_RECENT_MS);
+  const now = Date.now();
+  for (const [sessionId, agents] of leadAgents) {
+    for (const [id, agent] of agents) {
+      if (agent.status === 'running' || agent.status === 'waiting') continue;
+      const at = agent.updatedAt + SUBAGENT_RECENT_MS;
+      if (at <= now) agents.delete(id); else next = Math.min(next, at);
+    }
+    if (!agents.size) leadAgents.delete(sessionId);
+  }
   if (next === Infinity) return;
-  leadExpiry = window.setTimeout(() => { leadExpiry = 0; scheduleNavigation(); scheduleLeadExpiry(); }, Math.max(1000, next - Date.now() + 1000));
+  leadExpiry = window.setTimeout(() => { leadExpiry = 0; scheduleNavigation(); scheduleLeadExpiry(); }, next - now + 1000);
 }
 let leadChildrenLoaded = false, leadLoadFailed = false;
 const LEAD_LOAD_RETRY_MS = 30_000;
@@ -2419,7 +2427,7 @@ function renderNavigation(): void {
   const menuTrigger = choiceMenuAnchor ?? pendingMenuOpen?.anchor;
   const retainedRow = menuTrigger && nav.contains(menuTrigger) && menuTrigger.matches('.task-item') ? menuTrigger : null;
   const focused = nav.contains(document.activeElement) ? document.activeElement as HTMLElement : null;
-  const focusSelector = focused?.dataset.id ? `[data-id="${CSS.escape(focused.dataset.id)}"]` : focused?.dataset.action ? `[data-action="${CSS.escape(focused.dataset.action)}"]${focused.dataset.project ? `[data-project="${CSS.escape(focused.dataset.project)}"]` : ''}${focused.dataset.section ? `[data-section="${CSS.escape(focused.dataset.section)}"]` : ''}${focused.dataset.task ? `[data-task="${CSS.escape(focused.dataset.task)}"]` : ''}` : '';
+  const focusSelector = focused?.dataset.id ? `[data-id="${CSS.escape(focused.dataset.id)}"]` : focused?.dataset.action ? `[data-action="${CSS.escape(focused.dataset.action)}"]${focused.dataset.project ? `[data-project="${CSS.escape(focused.dataset.project)}"]` : ''}${focused.dataset.section ? `[data-section="${CSS.escape(focused.dataset.section)}"]` : ''}${focused.dataset.task ? `[data-task="${CSS.escape(focused.dataset.task)}"]` : ''}${focused.dataset.child ? `[data-child="${CSS.escape(focused.dataset.child)}"]` : ''}` : '';
   const pinnedGroup = pinned.length ? `<section class="task-group pinned-group" data-thread-group="pinned" aria-label="Pinned tasks">${heading('pinned', 'Pinned', pinned.length)}<div class="task-list">${pinned.map(s => row(s, !single, true)).join('')}</div></section>` : '';
   const empty = filtering ? '<div class="no-tasks sidebar-no-match">No tasks match</div>' : '';
   // Morph rather than replace: unchanged rows keep their nodes, so nothing flickers.
