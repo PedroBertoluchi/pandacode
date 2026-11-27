@@ -28,6 +28,7 @@ import type { AgentsDockPreferences } from './agents-dock';
 import { SECTIONS, type SettingsPage, type SettingsSection } from './settings-sections';
 import { mountRecommended } from './recommended-settings';
 import { enabled as turnChecksEnabled } from './turn-checks';
+import { enabled as projectHintEnabled } from './project-hint';
 import { crashRestartSettingsHtml, mountCrashRestartSettings, type KeepDrafts } from './crash-restart-settings';
 import { setStillSkyEnabled, stillSkyEnabled } from './sky-window';
 
@@ -49,6 +50,8 @@ interface SettingsOptions {
   preview: boolean;
   /** Runs the checkout's fast check after a clean turn and queues one repair on failure. */
   turnChecks: boolean;
+  /** Offers to open a New task in the project its first message names. */
+  projectHint: boolean;
   section?: SettingsSection;
   discover(): Promise<Provider[]>;
   /** True while this harness's version is still being probed: installed with no version, it says "Checking…". */
@@ -184,7 +187,7 @@ function sectionHtml(id: SettingsPage, options: SettingsOptions): string {
   switch (id) {
     case 'recommended': return '<div id="recommended-settings"></div>';
     case 'voice': return '<div id="voice-settings"></div>';
-    case 'general': return `<div class="settings-group">${uiSizeControls()}${switchRow('compact-mode', 'Compact conversation', '', options.compact)}${switchRow('expand-tool-activity', 'Expand tool activity', '', options.activityExpanded)}${switchRow('central-enabled', 'Central', 'A board of every project at the top of the sidebar: what runs, needs you, finished or failed. Built from your tasks with no model; a model runs only when you ask Central something.', options.central)}</div>
+    case 'general': return `<div class="settings-group">${uiSizeControls()}${switchRow('compact-mode', 'Compact conversation', '', options.compact)}${switchRow('expand-tool-activity', 'Expand tool activity', '', options.activityExpanded)}${switchRow('central-enabled', 'Central', 'A board of every project at the top of the sidebar: what runs, needs you, finished or failed. Built from your tasks with no model; a model runs only when you ask Central something.', options.central)}${switchRow('project-hint', 'Suggest the right project', 'When a new task starts in a drive root or a folder of projects and your first message names one of them, offers to open the task there. Matching is local; no model is called.', options.projectHint)}</div>
       <h3 class="settings-heading">Quick launcher</h3><div id="launcher-settings"></div><h3 class="settings-heading">Running agents widget</h3><div id="agents-dock-settings"></div><h3 class="settings-heading">Crash recovery</h3>${crashRestartSettingsHtml()}${options.projects ? '<h3 class="settings-heading">Projects</h3><div id="projects-settings" class="settings-group"></div>' : ''}`;
     case 'appearance': return `<div class="settings-group">
         ${settingRow('Theme', `<button type="button" class="secondary-button" data-action="toggle-theme">${icon(options.theme === 'dark' ? 'sun' : 'moon')}Use ${options.theme === 'dark' ? 'light' : 'dark'}</button>`, 'Imported VS Code themes keep their own.')}

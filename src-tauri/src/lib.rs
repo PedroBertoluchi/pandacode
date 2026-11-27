@@ -39,6 +39,7 @@ mod run_script;
 mod github;
 mod github_pull;
 mod github_hub;
+mod project_hint;
 mod project_icon;
 mod simulator;
 mod vm;
@@ -989,6 +990,16 @@ async fn delete_session_with_attachment_cleanup(
 async fn list_projects(state: State<'_, AppState>) -> Result<Vec<Project>> {
     let store = state.store.clone();
     blocking(move || store.lock().map_err(|e| e.to_string())?.projects()).await
+}
+/// Nearby folders that look like projects, for the New task "Open there" hint. Names only.
+#[tauri::command]
+async fn project_hint_folders(state: State<'_, AppState>, project_id: String) -> Result<project_hint::Hint> {
+    let store = state.store.clone();
+    blocking(move || {
+        let projects = store.lock().map_err(|e| e.to_string())?.projects()?;
+        project_hint::folders(&projects, &project_id)
+    })
+    .await
 }
 #[tauri::command]
 async fn add_project(state: State<'_, AppState>, path: String) -> Result<Project> {
@@ -5214,6 +5225,7 @@ pub(crate) fn main_invoke_handler(invoke: tauri::ipc::Invoke<tauri::Wry>) -> boo
         task_controls::save_task_export,
         task_controls::start_harness_terminal,
         list_projects,
+        project_hint_folders,
         add_project,
         remove_project,
         relink_project,

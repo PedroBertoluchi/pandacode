@@ -10,6 +10,7 @@ use tokio::{
 const HEADER_LIMIT: usize = 8192;
 const RESULT_LIMIT: usize = 128 * 1024;
 const SERVER_NAME: &str = "pandacode_architect";
+const TITLE_SERVER: &str = "pandacode_title";
 /// Versions this loopback server speaks. `2026-07-28` is the revision ZCode
 /// probes for; the older two are what the other harnesses negotiate.
 const MCP_VERSIONS: &[&str] = &["2026-07-28", "2025-06-18", "2025-03-26"];
@@ -111,8 +112,8 @@ impl Server {
                                 // A client that gives up on a call (its own timeout) closes the
                                 // connection: the call ends here too, so its pending approval
                                 // expires and a late Approve runs nothing.
-                                Ok(Ok(body)) => tokio::select! {
-                                    response = context.respond(body) => response,
+                                Ok(Ok((body, title_only))) => tokio::select! {
+                                    response = context.respond(body, title_only) => response,
                                     () = closed(&stream) => return,
                                 },
                                 Ok(Err(status)) => HttpResponse::empty(status),
@@ -133,8 +134,12 @@ impl Server {
             context: server_context,
         })
     }
+    /// The main bridge stays deferred behind Claude Code's tool search, so its ~40 schemas never
+    /// ride on every request. A second entry on `/mcp/title` serves only `pandacode_title` and is
+    /// `alwaysLoad`: the agent rarely searches for an optional metadata tool, so without it sidebar
+    /// titles fell back to the cut prompt. Same address, token and run scoping.
     pub(super) fn claude_config(&self) -> Value {
-        json!({"mcpServers":{SERVER_NAME:{"type":"http","url":format!("http://{}/mcp",self.authority),"headers":{"Authorization":format!("Bearer {}",self.token)}}}})
+        json!({"mcpServers":{SERVER_NAME:{"type":"http","url":format!("http://{}/mcp",self.authority),"headers":{"Authorization":format!("Bearer {}",self.token)}},TITLE_SERVER:{"type":"http","url":format!("http://{}/mcp/title",self.authority),"headers":{"Authorization":format!("Bearer {}",self.token)},"alwaysLoad":true}}})
     }
     pub(super) fn pi_config(&self) -> Value {
         json!({"url":format!("http://{}/mcp",self.authority),"authorization":format!("Bearer {}",self.token)})
@@ -394,7 +399,7 @@ async fn closed(stream: &TcpStream) {
     }
 }
 
-async fn read_request(stream: &mut TcpStream, context: &Context) -> Result<Vec<u8>, u16> {
+async fn read_request(stream: &mut TcpStream, context: &Context) -> Result<(Vec<u8>, bool), u16> {
     let mut bytes = Vec::with_capacity(4096);
     let header_end;
     loop {
@@ -420,8 +425,12 @@ async fn read_request(stream: &mut TcpStream, context: &Context) -> Result<Vec<u
     let request = lines.next().ok_or(400u16)?;
     let mut fields = request.split(' ');
     let method = fields.next().unwrap_or_default();
-    if fields.next() != Some("/mcp") || fields.next() != Some("HTTP/1.1") || fields.next().is_some()
-    {
+    let title_only = match fields.next() {
+        Some("/mcp") => false,
+        Some("/mcp/title") => true,
+        _ => return Err(400),
+    };
+    if fields.next() != Some("HTTP/1.1") || fields.next().is_some() {
         return Err(400);
     }
     let mut headers = HashMap::new();
@@ -482,11 +491,12 @@ async fn read_request(stream: &mut TcpStream, context: &Context) -> Result<Vec<u
         .read_exact(&mut bytes[received..])
         .await
         .map_err(|_| 400u16)?;
-    Ok(bytes[header_end..].to_vec())
+    Ok((bytes[header_end..].to_vec(), title_only))
 }
 
 impl Context {
-    async fn respond(&self, bytes: Vec<u8>) -> HttpResponse {
+    async fn respond(&self, bytes: Vec<u8>, title_only: bool) -> HttpResponse {
+        let listed = |name: &Value| !title_only || name == crate::session_titles::TOOL;
         let request: Value = match serde_json::from_slice(&bytes) {
             Ok(request) => request,
             Err(_) => return HttpResponse::error(Value::Null, -32700, "Invalid JSON"),
@@ -546,12 +556,12 @@ impl Context {
             // host-tool call from cache. Each tool is name, description and
             // input schema from this run's catalog — nothing else.
             "tools/list" => {
-                let tools:Vec<Value> = self.host.tools.iter().map(|spec| json!({"name":spec["name"],"description":spec["description"],"inputSchema":spec["inputSchema"]})).collect();
+                let tools:Vec<Value> = self.host.tools.iter().filter(|spec| listed(&spec["name"])).map(|spec| json!({"name":spec["name"],"description":spec["description"],"inputSchema":spec["inputSchema"]})).collect();
                 json!({"resultType":"complete","ttlMs":0,"cacheScope":"private","tools":tools})
             }
             "tools/call" => {
                 let name = request["params"]["name"].as_str().unwrap_or_default();
-                if !self.host.tools.iter().any(|spec| spec["name"] == name) {
+                if !self.host.tools.iter().any(|spec| spec["name"] == name && listed(&spec["name"])) {
                     return HttpResponse::error(id, -32602, "Unknown architect tool");
                 }
                 let args = request["params"]
@@ -850,6 +860,8 @@ mod tests {
         };
         let server = Server::start_for_run(placeholder, "task".into(), Arc::new(|_| {}), "ask").await.unwrap().unwrap();
         let address = server.claude_config();
+        assert!(address["mcpServers"][SERVER_NAME].get("alwaysLoad").is_none(), "the main bridge stays deferred: its schemas must not ride on every request");
+        assert_eq!(address["mcpServers"][TITLE_SERVER]["alwaysLoad"], true, "Claude Code must not defer the title tool behind its tool search");
         let call = json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":crate::session_titles::TOOL,"arguments":{"title":"Topic"}}});
         let (_, before) = request(&server, call.clone(), "").await;
         assert_eq!(before["result"]["isError"], true);
@@ -862,6 +874,36 @@ mod tests {
         assert_eq!(server.claude_config(), address, "the agent already holds this address and token");
         let (_, after) = request(&server, call, "").await;
         assert_eq!(after["result"]["isError"], false);
+    }
+    #[tokio::test]
+    async fn the_always_loaded_title_entry_serves_only_the_title_tool_within_a_small_budget() {
+        let big = |name: &str| json!({"type":"function","name":name,"description":"d".repeat(400),"inputSchema":{"type":"object","properties":{"a":{"type":"string"}}}});
+        let title = json!({"type":"function","name":crate::session_titles::TOOL,"description":"Sidebar metadata","inputSchema":{"type":"object","properties":{"title":{"type":"string"}}}});
+        let tools: Vec<Value> = std::iter::once(title).chain((0..40).map(|i| big(&format!("pandacode_tool_{i}")))).collect();
+        let host = ToolHost { tools, approval_tools: HashSet::new(), handler: Arc::new(|_, _| Box::pin(async { Ok(json!({"staged":true})) })) };
+        let server = Server::start_for_run(host, "task".into(), Arc::new(|_| {}), "ask").await.unwrap().unwrap();
+        let config = server.claude_config();
+        assert!(config["mcpServers"][SERVER_NAME].get("alwaysLoad").is_none());
+        let entry = &config["mcpServers"][TITLE_SERVER];
+        assert_eq!(entry["alwaysLoad"], true);
+        assert!(entry["url"].as_str().unwrap().ends_with("/mcp/title"));
+        assert_eq!(entry["headers"], config["mcpServers"][SERVER_NAME]["headers"], "same token, same run scoping");
+        let body = serde_json::to_vec(&json!({"jsonrpc":"2.0","id":2,"method":"tools/list"})).unwrap();
+        let header = |path: &str, token: &str| format!("POST {path} HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n", server.authority, body.len());
+        let (status, list) = raw(&server, header("/mcp/title", &server.token), body.clone()).await;
+        assert_eq!(status, 200);
+        let always_loaded = list["result"]["tools"].as_array().unwrap();
+        assert_eq!(always_loaded.len(), 1);
+        assert_eq!(always_loaded[0]["name"], crate::session_titles::TOOL);
+        let bytes = serde_json::to_string(always_loaded).unwrap().len();
+        assert!(bytes <= 400, "always-loaded schema bytes {bytes}");
+        let (_, full) = raw(&server, header("/mcp", &server.token), body.clone()).await;
+        assert_eq!(full["result"]["tools"].as_array().unwrap().len(), 41);
+        let call = serde_json::to_vec(&json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"pandacode_tool_1","arguments":{}}})).unwrap();
+        let (_, refused) = raw(&server, header("/mcp/title", &server.token).replace(&body.len().to_string(), &call.len().to_string()), call).await;
+        assert_eq!(refused["error"]["code"], -32602, "the title entry must not reach other tools");
+        let (status, _) = raw(&server, header("/mcp/title", "wrong"), body).await;
+        assert_eq!(status, 401);
     }
     #[tokio::test]
     async fn title_metadata_is_optional_and_does_not_emit_transcript_activity() {
@@ -1135,7 +1177,7 @@ mod tests {
         let context = current(&server.context);
         // Past the old cap of 8 pending approvals, and past the 64 running calls too.
         const WAITING: usize = 70;
-        let waiting: Vec<_> = (0..WAITING).map(|id| Box::pin(context.respond(serde_json::to_vec(&json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":"pandacode_delegate","arguments":{}}})).unwrap()))).collect();
+        let waiting: Vec<_> = (0..WAITING).map(|id| Box::pin(context.respond(serde_json::to_vec(&json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":"pandacode_delegate","arguments":{}}})).unwrap(), false))).collect();
         let mut waiting = futures_util::future::join_all(waiting);
         let mut asked = Vec::new();
         while asked.len() < WAITING {
@@ -1147,7 +1189,7 @@ mod tests {
         assert_eq!(context.calls.available_permits(), host_tools::MAX_CALLS, "a call waiting for the user holds no slot");
         // Past the old cap of 4096 requests, on a server with every approval slot in use.
         for _ in 0..4100 {
-            let answer = context.respond(serde_json::to_vec(&json!({"jsonrpc":"2.0","id":100,"method":"ping"})).unwrap()).await;
+            let answer = context.respond(serde_json::to_vec(&json!({"jsonrpc":"2.0","id":100,"method":"ping"})).unwrap(), false).await;
             assert_eq!(answer.status, 200);
         }
         for pending in &asked {
@@ -1184,7 +1226,7 @@ mod tests {
         let server = server_from_host(slow).await;
         let context = current(&server.context);
         let _held = context.calls.acquire_many(host_tools::MAX_CALLS as u32).await.unwrap();
-        let answer = context.respond(serde_json::to_vec(&call(json!(1), json!({}))).unwrap()).await;
+        let answer = context.respond(serde_json::to_vec(&call(json!(1), json!({}))).unwrap(), false).await;
         let body = String::from_utf8_lossy(&answer.body).into_owned();
         assert!(body.contains("Too many PandaCode tools are running at once") && !body.contains("architect"), "{body}");
     }

@@ -1061,6 +1061,10 @@ html[data-theme="dark"] body .dialog-plate{box-shadow:0 40px 100px -30px rgb(0 0
 .remote-start-retry:hover,.remote-start-dismiss:hover{background:var(--raised);color:var(--text)}
 :is(.remote-start-retry,.remote-start-dismiss) .icon{width:13px;height:13px}
 .composer-inline-note{margin:0 0 6px;padding:6px 10px;border-radius:var(--ds-inner-radius);background:rgb(var(--accent-rgb) / .08);color:var(--text);font-size:var(--type-meta);}
+.project-hint{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px 10px;margin:0 0 6px;padding:6px 10px;border-radius:var(--ds-inner-radius);background:rgb(var(--accent-rgb) / .08);color:var(--text);font-size:var(--type-meta)}
+.project-hint-text{min-width:0;flex:1 1 220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.project-hint-path{color:var(--muted)}
+.project-hint-actions{display:flex;flex-shrink:0;gap:6px}
 .remote-missing-note{display:flex;align-items:center;gap:8px;white-space:nowrap}
 .remote-missing-note>span{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis}
 .remote-note-action{flex-shrink:0;padding:0;color:var(--accent-ink);font-size:var(--type-body);font-weight:var(--weight-medium);text-decoration:underline;text-underline-offset:2px}
