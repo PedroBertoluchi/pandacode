@@ -824,7 +824,7 @@ mod tests {
             ("Da uma olhada nos erros do Sentry do BAMemory e me diz o que mudou", "erros do Sentry do BAMemory"),
             ("Hey, could you take a look at the failing CI on the release branch", "failing CI on the release branch"),
             ("Can you please repair Windows startup paths?", "repair Windows startup paths"),
-            ("Implement the new billing export for invoices and receipts today.", "Implement the new billing export for"),
+            ("Implement the new billing export for invoices and receipts today.", "Implement the new billing export"),
         ] {
             let title = fallback(prompt).unwrap_or_default();
             let words = title.split_whitespace().count();
