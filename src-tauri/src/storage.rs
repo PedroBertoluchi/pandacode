@@ -176,6 +176,7 @@ const STMT_CACHE_CAPACITY: usize = 256;
 const READ_ONLY_PRAGMAS: &str = "PRAGMA cache_size=-4096; PRAGMA temp_store=MEMORY;";
 mod helpers;
 mod messages;
+pub(crate) use messages::ContextStats;
 mod schema_v38;
 mod sessions;
 mod sql;
