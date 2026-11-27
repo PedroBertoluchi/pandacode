@@ -42,12 +42,30 @@ test('a prompt naming an unregistered folder asks first, and Open there register
 
 test('Keep here sends where the task is, and the chip does not come back', async ({ page }) => {
   await newTaskInRoot(page);
-  await type(page, 'Lê as mensagens do Roberto e vê o que devemos');
+  await type(page, 'Lê as mensagens do Roberto Carlos e vê o que devemos');
   await expect(chip(page)).toContainText('Roberto Carlos');
   await chip(page).getByRole('button', { name: 'Keep here' }).click();
   await expect(chip(page)).toHaveCount(0);
   await expect(page.locator('#navigation .task-item.selected')).toContainText('P:\\');
-  await expect(page.locator('#transcript')).toContainText('Lê as mensagens do Roberto');
+  await expect(page.locator('#transcript')).toContainText('Lê as mensagens do Roberto Carlos');
+});
+
+test('Open there keeps what was attached to the task', async ({ page }) => {
+  await newTaskInRoot(page);
+  await page.locator('#prompt').focus();
+  await page.evaluate(() => {
+    const bytes = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg=='), c => c.charCodeAt(0));
+    const data = new DataTransfer();
+    data.items.add(new File([bytes], 'shot.png', { type: 'image/png' }));
+    document.querySelector('#prompt')!.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+  });
+  await expect(page.locator('#attachments .prompt-chip')).toHaveCount(1);
+  await type(page, 'Ajusta o outfit do Tibia para o evento');
+  await chip(page).getByRole('button', { name: 'Open there' }).click();
+  await expect(page.locator('#navigation .task-item.selected')).toContainText('Tibia');
+  await expect(page.locator('#transcript')).toContainText('Ajusta o outfit do Tibia para o evento');
+  await expect(page.locator('#toast')).not.toContainText('Attachments cleared');
+  await expect(page.locator('#transcript .prompt-chip, #transcript [data-attachment]').first()).toBeAttached();
 });
 
 test('a second send of the same text keeps the task here', async ({ page }) => {
@@ -85,7 +103,7 @@ for (const width of [1280, 900]) for (const theme of ['dark', 'light'] as const)
     await page.emulateMedia({ colorScheme: theme });
     await page.addInitScript(value => { localStorage.setItem('pandacode.theme', value); localStorage.setItem('pandacode.wallpapers', 'false'); }, theme);
     await newTaskInRoot(page);
-    await type(page, 'Lê as mensagens do Roberto, vê se estamos devendo algo pra ele');
+    await type(page, 'Lê as mensagens do Roberto Carlos, vê se estamos devendo algo pra ele');
     await expect(chip(page)).toBeVisible();
     const box = (await chip(page).boundingBox())!;
     expect(box.x).toBeGreaterThanOrEqual(0);

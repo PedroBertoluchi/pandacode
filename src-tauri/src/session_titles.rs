@@ -323,7 +323,7 @@ const FILLER: &[&str] = &[
     "voce pode", "voce consegue", "pode", "poderia", "consegue", "me ajuda a", "me ajuda com", "me ajuda",
     "da uma olhada em", "da uma olhada", "de uma olhada em", "de uma olhada", "da uma checada em",
     "da uma conferida em", "olha", "ve se", "ve", "veja", "le", "leia", "confere", "confira", "checa",
-    "faca", "faz", "vamos", "bora", "agora", "entao", "ai", "tipo", "comigo", "depois", "tambem",
+    "faca", "faz", "vamos", "bora", "agora", "entao", "tipo", "comigo", "depois", "tambem",
     "hello", "hi", "hey", "good morning", "good afternoon", "good evening", "please", "kindly",
     "can you", "could you", "would you", "will you", "i need you to", "i want you to",
     "i would like you to", "i'd like you to", "i need to", "i want to", "i'd like to", "i need", "i want",
@@ -387,6 +387,10 @@ fn strip_leading(words: &mut Vec<&str>) {
             .map(|phrase| phrase.len())
             .max();
         if let Some(count) = filler {
+            // "Faça isso" has nothing left to name once "faça" goes: keep it.
+            if matches!(folded[0].as_str(), "faca" | "faz") && count == 1 && words.len() < 3 {
+                return;
+            }
             words.drain(..count);
         } else if words.len() > 1 && STOP.contains(&folded[0].as_str()) {
             words.remove(0);
@@ -400,13 +404,21 @@ fn strip_leading(words: &mut Vec<&str>) {
 /// without openers, trailing connectives or punctuation, and never cut inside a word.
 fn condense(text: &str) -> Option<String> {
     let mut picked: Vec<&str> = Vec::new();
+    let mut first: Vec<&str> = Vec::new();
     for clause in clauses(text) {
         let mut words: Vec<&str> = clause.split_whitespace().collect();
+        if first.is_empty() {
+            first = words.clone();
+        }
         strip_leading(&mut words);
         picked.extend(words);
         if picked.len() >= 3 {
             break;
         }
+    }
+    // One word left after the openers went: the opener was part of the subject, so name it whole.
+    if picked.len() == 1 {
+        picked = first;
     }
     picked.truncate(6);
     let clean = |word: &str| word.trim_end_matches([',', ';', ':', '.', '!', '?']).to_owned();
@@ -417,7 +429,7 @@ fn condense(text: &str) -> Option<String> {
     while picked.len() > 1 && picked.join(" ").chars().count() > 64 {
         picked.pop();
     }
-    if picked.len() < 2 {
+    if picked.is_empty() {
         return None;
     }
     valid_title(&picked.join(" "))
@@ -839,6 +851,14 @@ mod tests {
         assert!(title.chars().count() <= 64 && title.split_whitespace().count() <= 6, "{title}");
         assert!(fallback("Boa tarde, por favor, obrigado").is_none());
         assert!(fallback("Fala, tudo bem?").is_none());
+    }
+    #[test]
+    fn fallback_keeps_the_subject_when_an_opener_would_leave_too_little() {
+        assert_eq!(fallback("Faça, por favor, o deploy").unwrap(), "Faça deploy");
+        assert_eq!(fallback("Faz deploy hoje").unwrap(), "deploy hoje");
+        assert_eq!(fallback("Faça o relatório de vendas do mês").unwrap(), "relatório de vendas do mês");
+        assert_eq!(fallback("Preciso de ajuda").unwrap(), "Preciso de ajuda");
+        assert_eq!(fallback("Ai Gateway com fallback de modelo").unwrap(), "Ai Gateway com fallback de modelo");
     }
     #[test]
     fn the_first_message_asks_for_a_title_and_later_ones_only_name_it() {

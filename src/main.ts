@@ -5978,6 +5978,8 @@ function showComposerNote(s: Session, text: string): void {
 const projectHints = new Map<string, { text: string; hint: ProjectHint }>();
 /** Tasks whose chip was answered: it never comes back for them. */
 const projectHintDecided = new Set<string>();
+/** Tasks whose folder lookup is running: a second send meanwhile is swallowed, not sent twice. */
+const projectHintLooking = new Set<string>();
 function syncProjectHint(s: Session): void {
   if (s.id !== state.sessionId) return;
   const old = document.querySelector<HTMLElement>('#project-hint'), markup = projectHintHtml(projectHints.get(s.id)?.hint);
@@ -5992,9 +5994,12 @@ async function holdForProjectHint(s: Session, text: string, generation: number):
   const current = state.projects.find(p => p.id === s.projectId);
   if (!current || !text || text.startsWith('/') || !projectHintEnabled() || projectHintDecided.has(s.id) || !newTaskView() || chatTask(s)
     || s.remoteDevice || s.cloud || s.worktreePath || remoteChoice !== LOCAL || sidebarBots.some(item => item.desktopSession === s.id)) return false;
+  if (projectHintLooking.has(s.id)) return true;
+  projectHintLooking.add(s.id);
   let found: { wide: boolean; folders: HintFolder[] };
   try { found = await call<{ wide: boolean; folders: HintFolder[] }>('project_hint_folders', { projectId: current.id }); }
   catch (error) { console.warn('Could not look for a better project:', error); return false; }
+  finally { projectHintLooking.delete(s.id); }
   if (!found.wide) return false;
   const hint = findProject(text, current, userProjects(), found.folders);
   if (state.sessionId !== s.id || state.generation !== generation) return true;
@@ -6014,7 +6019,7 @@ async function openProjectHint(): Promise<void> {
       state.projects = await call<Project[]>('list_projects');
     }
     projectHintDecided.add(s.id); clearProjectHint(s);
-    await changeTaskProject(id);
+    await changeTaskProject(id, true);
   } catch (error) { report(error); return; }
   await send();
 }
@@ -7404,7 +7409,7 @@ function showOpenProject(forTask = false): void {
   modal('Open project', `<form id="open-project-form"><label class="field-label" for="project-folder">Project folder</label><input id="project-folder" name="path" placeholder="/Users/you/Projects/my-app" autocomplete="off" spellcheck="false" required><p class="field-help">Enter a full path or choose Browse.</p><div class="dialog-footer"><button type="button" class="secondary-button" data-action="browse-project">${icon('folder')}Browse…</button><button type="button" class="secondary-button" data-action="close-dialog">Cancel</button><button class="primary-button">Open project</button></div></form>`);
   if (forTask && newTaskView()) openingProjectForTask = { id: state.sessionId, generation: state.generation };
 }
-async function changeTaskProject(projectId: string): Promise<void> {
+async function changeTaskProject(projectId: string, keepAttachments = false): Promise<void> {
   let selected = session();
   if (!selected || !newTaskView() || taskBusyConfiguring(selected.id)) throw new Error('A project can only be changed before starting the task.');
   const generation = state.generation;
@@ -7423,8 +7428,8 @@ async function changeTaskProject(projectId: string): Promise<void> {
     // Reload its new project before permitting any file or composer action.
     if (generation !== state.generation) { await selectSession(selected.id, true); return; }
     const currentGeneration = ++state.generation;
-    const hadAttachments = state.attachments.length > 0;
-    state.attachments = [];
+    const hadAttachments = !keepAttachments && state.attachments.length > 0;
+    if (!keepAttachments) state.attachments = [];
     activateProject(updated.projectId);
     if (state.projectFilter && state.projectFilter !== updated.projectId) setProjectFilter(updated.projectId);
     render();

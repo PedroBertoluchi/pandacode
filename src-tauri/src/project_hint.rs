@@ -6,6 +6,7 @@ use std::{
     collections::HashSet,
     fs,
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
 
 const MARKERS: &[&str] = &[
@@ -16,6 +17,7 @@ const MAX_ROOTS: usize = 12;
 const MAX_ENTRIES: usize = 400;
 const MAX_CONTAINERS: usize = 40;
 const WIDE_AT: usize = 3;
+const LOOKUP_BUDGET: Duration = Duration::from_millis(300);
 
 #[derive(Debug, Serialize, PartialEq)]
 pub(crate) struct Folder {
@@ -32,6 +34,10 @@ pub(crate) struct Hint {
 }
 
 fn is_project(dir: &Path) -> bool {
+    // A worktree checkout has a `.git` file, not a folder: it is somebody's task, not a project to open.
+    if dir.join(".git").is_file() {
+        return false;
+    }
     MARKERS.iter().any(|marker| dir.join(marker).exists())
         || fs::read_dir(dir).is_ok_and(|entries| {
             entries.take(MAX_ENTRIES).flatten().any(|entry| {
@@ -60,10 +66,13 @@ fn subfolders(dir: &Path) -> Vec<PathBuf> {
 
 /// Project-looking folders directly under `root`, and under its folders that are not projects
 /// themselves (a `Clients` folder of client folders).
-fn scan(root: &Path) -> Vec<PathBuf> {
+fn scan(root: &Path, deadline: Instant) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut containers = 0;
     for dir in subfolders(root) {
+        if Instant::now() >= deadline {
+            break;
+        }
         if is_project(&dir) {
             found.push(dir);
         } else if containers < MAX_CONTAINERS {
@@ -77,6 +86,13 @@ fn scan(root: &Path) -> Vec<PathBuf> {
 pub(crate) fn folders(projects: &[Project], current: &str) -> Result<Hint> {
     let current = projects.iter().find(|p| p.id == current).ok_or("Unknown project.")?;
     let current_path = PathBuf::from(&current.path);
+    let deadline = Instant::now() + LOOKUP_BUDGET;
+    let own = scan(&current_path, deadline);
+    let wide = current_path.parent().is_none()
+        || (own.len() >= WIDE_AT && !current_path.join(".git").exists());
+    if !wide {
+        return Ok(Hint { wide, folders: Vec::new() });
+    }
     let mut roots = vec![current_path.clone()];
     for project in projects {
         if crate::chats::is_chat_folder(Path::new(&project.path)) {
@@ -89,13 +105,10 @@ pub(crate) fn folders(projects: &[Project], current: &str) -> Result<Hint> {
         }
     }
     roots.truncate(MAX_ROOTS);
-    let own = scan(&current_path);
-    let wide = current_path.parent().is_none()
-        || (own.len() >= WIDE_AT && !current_path.join(".git").exists());
     let mut seen = HashSet::new();
     let mut found = Vec::new();
     for root in &roots {
-        for dir in if root == &current_path { own.clone() } else { scan(root) } {
+        for dir in if root == &current_path { own.clone() } else { scan(root, deadline) } {
             let Some(name) = dir.file_name().map(|n| n.to_string_lossy().into_owned()) else { continue };
             if seen.insert(dir.clone()) {
                 found.push(Folder { name, path: dir.to_string_lossy().into_owned() });
@@ -156,7 +169,7 @@ mod tests {
     }
 
     #[test]
-    fn a_checkout_with_a_few_packages_is_not_wide_and_siblings_are_still_offered() {
+    fn a_checkout_with_a_few_packages_is_not_wide_and_offers_nothing() {
         let root = tree();
         let repo = root.path().join("BAMemory");
         for package in ["a", "b", "c"] {
@@ -164,8 +177,30 @@ mod tests {
             fs::write(repo.join(package).join("package.json"), "{}").unwrap();
         }
         let hint = folders(&[project("p", &repo)], "p").unwrap();
-        assert!(!hint.wide);
-        assert!(names(&hint).contains(&"Tibia"), "a sibling of a registered project is a candidate");
+        assert_eq!(hint, Hint { wide: false, folders: Vec::new() });
+    }
+
+    #[test]
+    fn a_project_that_is_not_wide_skips_every_other_root() {
+        let root = tree();
+        let repo = root.path().join("BAMemory");
+        let hint = folders(&[project("p", &repo), project("q", &root.path().join("Tibia"))], "p").unwrap();
+        assert_eq!(hint, Hint { wide: false, folders: Vec::new() });
+    }
+
+    #[test]
+    fn a_worktree_checkout_with_a_git_file_is_not_offered() {
+        let root = tree();
+        fs::create_dir_all(root.path().join("Wt")).unwrap();
+        fs::write(root.path().join("Wt").join(".git"), "gitdir: elsewhere").unwrap();
+        let hint = folders(&[project("p", root.path())], "p").unwrap();
+        assert!(!names(&hint).contains(&"Wt"));
+    }
+
+    #[test]
+    fn an_expired_budget_stops_the_scan() {
+        let root = tree();
+        assert!(scan(root.path(), Instant::now()).is_empty());
     }
 
     #[test]

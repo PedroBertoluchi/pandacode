@@ -21,9 +21,33 @@ test('a prompt naming a folder finds it, whatever the case', () => {
   assert.equal(find('quero ver o TIBIA outfit craft')?.path, 'F:\\Tibia');
 });
 
-test('a client is found by one word of its name, with accents ignored', () => {
-  assert.equal(find('Lê as mensagens do Roberto, vê se estamos devendo algo pra ele')?.name, 'Roberto Carlos');
-  assert.equal(find('mensagens do RÓBERTO')?.name, 'Roberto Carlos');
+test('a client is found by its whole name, with accents ignored, never by one of two words', () => {
+  assert.equal(find('Lê as mensagens do Roberto Carlos, vê se estamos devendo algo')?.name, 'Roberto Carlos');
+  assert.equal(find('mensagens do RÓBERTO CÁRLOS')?.name, 'Roberto Carlos');
+  assert.equal(find('Lê as mensagens do Roberto'), null, 'one word of a two word name is not enough');
+  assert.equal(find('o carlos mandou o roberto avisar')?.name, 'Roberto Carlos', 'two shared words are');
+});
+
+test('worktree checkouts, years and generic names never match', () => {
+  const noise = [
+    { name: 'Atlas', path: 'P:\\Worktrees\\Atlas' },
+    { name: '2024', path: 'P:\\2024' },
+    { name: 'Server', path: 'P:\\Server' },
+    { name: 'Admin', path: 'P:\\Admin' },
+    { name: 'Shared', path: 'P:\\Shared' },
+  ];
+  for (const prompt of ['ajusta o Atlas', 'relatório de 2024', 'sobe o server', 'tela de admin', 'código shared']) {
+    assert.equal(findProject(prompt, root, [root], noise), null, prompt);
+  }
+  assert.equal(findProject('ajusta o Atlas', root, [root, { id: 'wt', name: 'Atlas', path: 'p:/worktrees/atlas' }], []), null);
+});
+
+test('a 2 or 3 letter name matches only as that whole uppercase word', () => {
+  const short = [{ name: 'RC', path: 'P:\\RC' }];
+  assert.equal(findProject('Atualiza o RC hoje', root, [root], short)?.name, 'RC');
+  assert.equal(findProject('atualiza o rc hoje', root, [root], short), null);
+  assert.equal(findProject('o RCA falhou', root, [root], short), null);
+  assert.equal(findProject('o ARC falhou', root, [root], short), null);
 });
 
 test('a registered project is offered by its id, and beats a longer name sharing one word', () => {

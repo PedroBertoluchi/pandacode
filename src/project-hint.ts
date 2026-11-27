@@ -20,6 +20,7 @@ const GENERIC = new Set([
   'apps', 'tools', 'build', 'builds', 'temp', 'test', 'tests', 'testes', 'teste', 'docs', 'work', 'code', 'data', 'files', 'main', 'user', 'users',
   'clients', 'client', 'projects', 'project', 'projetos', 'projeto', 'worktrees', 'backup', 'backups', 'site', 'sites', 'cliente', 'clientes',
   'game', 'games', 'archive', 'old', 'copy', 'base', 'repo', 'repos', 'tmp', 'node', 'dist', 'target', 'release', 'releases',
+  'server', 'admin', 'core', 'shared', 'utils', 'config', 'demo', 'notes', 'home', 'scripts', 'app', 'web', 'api',
 ]);
 
 export function enabled(): boolean {
@@ -50,18 +51,28 @@ export function displayPath(path: string): string {
 
 interface Candidate { name: string; path: string; projectId?: string }
 
+/** A checkout made by a worktree task (inside a Worktrees folder) is never "the project". */
+const inWorktrees = (path: string) => path.replace(/^\\\\\?\\/, '').split(/[\\/]+/).some(part => fold(part) === 'worktrees');
+/** A 2 or 3 letter all-capitals name (RC) is mentioned only as that whole uppercase word. */
+const acronym = (name: string) => /^\p{Lu}{2,3}$/u.test(name.trim()) ? name.trim() : '';
+const mentionsAcronym = (prompt: string, name: string) => new RegExp(`(?<![\\p{L}\\p{N}])${name}(?![\\p{L}\\p{N}])`, 'u').test(prompt);
+
 /** The project the first message names, or null when none stands out or it names the project it is already in. */
 export function findProject(prompt: string, current: HintProject, projects: HintProject[], folders: HintFolder[]): ProjectHint | null {
-  const mentioned = new Set(words(prompt.slice(0, PROMPT_CHARS)));
-  if (!mentioned.size) return null;
+  const text = prompt.slice(0, PROMPT_CHARS);
+  const mentioned = new Set(words(text));
+  if (!mentioned.size && !/\p{Lu}{2,3}/u.test(text)) return null;
   const candidates: Candidate[] = projects.map(project => ({ name: project.name, path: project.path, projectId: project.id }));
   for (const folder of folders) if (!candidates.some(known => samePath(known.path, folder.path))) candidates.push(folder);
   let best: { candidate: Candidate; score: number } | undefined;
   let tied = false;
   for (const candidate of candidates) {
-    const own = words(candidate.name).filter(word => !GENERIC.has(word));
-    const shared = own.filter(word => mentioned.has(word)).length;
+    if (inWorktrees(candidate.path)) continue;
+    const short = acronym(candidate.name);
+    const own = short ? [short] : words(candidate.name).filter(word => !GENERIC.has(word) && /\p{L}/u.test(word));
+    const shared = short ? (mentionsAcronym(text, short) ? 1 : 0) : own.filter(word => mentioned.has(word)).length;
     if (!shared) continue;
+    if (own.length > 1 && shared < own.length && shared < 2) continue;
     // A name fully mentioned beats a longer name sharing one word; a registered project beats a folder.
     const score = shared / own.length + 0.1 * shared + (candidate.projectId ? 0.01 : 0);
     if (!best || score > best.score + 1e-9) { best = { candidate, score }; tied = false; }
