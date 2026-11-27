@@ -13,10 +13,14 @@ export interface CentralCard {
   events: CentralEvent[]; latest: number;
 }
 export interface CentralModel {
-  /** Tasks that need a look anywhere: waiting on the user, stopped by a usage limit, or failed. */
+  /** Tasks that need a look anywhere: waiting on the user, stopped by a usage limit, or failed. Equals attentionTotal + failuresTotal. */
   badge: number;
-  /** Those tasks, newest first, for the strip at the top of the board. */
+  /** Tasks waiting on the user or stopped by a usage limit, newest first, for the "Needs you" strip. */
   attention: CentralEvent[];
+  attentionTotal: number;
+  /** Tasks that failed in the last 24 hours, newest first, for the "Failed" strip. */
+  failures: CentralEvent[];
+  failuresTotal: number;
   cards: CentralCard[];
 }
 export interface CentralInput {
@@ -35,32 +39,47 @@ export const isCentralProject = (project: Pick<Project, 'path'> | undefined): bo
 
 /** What happened to a task, or null when it is idle and quiet. A question in a worker counts for its leader. */
 export function centralKind(task: Session, input: Pick<CentralInput, 'signal' | 'tree' | 'now'>): CentralEvent['kind'] | null {
-  const signal = input.signal(task), tree = input.tree(task);
+  const signal = input.signal(task);
   if (signal === 'failed') return 'failed';
-  if (signal === 'attention' || (tree?.waiting ?? 0) > 0) return 'needs';
+  if (signal === 'attention' || (input.tree(task)?.waiting ?? 0) > 0) return 'needs';
   if (signal === 'limited') return 'limited';
   if (signal === 'running') return 'running';
   const at = task.lastResponseAt ?? task.updatedAt;
   return input.now - at <= CENTRAL_WINDOW_MS ? 'finished' : null;
 }
 
+/** When a task's event counts for the badge: a failure from days ago is old news; a question or a limit still waits. */
+const counts = (kind: CentralEvent['kind'], at: number, now: number): boolean => kind === 'needs' || kind === 'limited' || (kind === 'failed' && now - at <= CENTRAL_WINDOW_MS);
+const eventTime = (task: Session, kind: CentralEvent['kind']): number => kind === 'running' ? task.lastPromptAt ?? task.updatedAt : task.lastResponseAt ?? task.updatedAt;
+
+/** Just the badge, for when the board is closed: the same count as buildCentral(...).badge, with no cards built. */
+export function centralBadge(input: CentralInput): number {
+  const known = new Set(input.projects.map(project => project.id));
+  let badge = 0;
+  for (const task of input.sessions) {
+    if (!known.has(task.projectId) || task.archived || task.draft) continue;
+    const kind = centralKind(task, input);
+    if (kind && counts(kind, eventTime(task, kind), input.now)) badge++;
+  }
+  return badge;
+}
+
 export function buildCentral(input: CentralInput): CentralModel {
   const byProject = new Map<string, Project>(input.projects.map(project => [project.id, project]));
   const cards = new Map<string, CentralCard>();
-  const attention: CentralEvent[] = [];
+  const attention: CentralEvent[] = [], failures: CentralEvent[] = [];
   for (const task of input.sessions) {
     const project = byProject.get(task.projectId);
     if (!project || task.archived || task.draft) continue;
     const kind = centralKind(task, input);
     if (!kind) continue;
-    const at = kind === 'running' ? task.lastPromptAt ?? task.updatedAt : task.lastResponseAt ?? task.updatedAt;
-    // A failure from days ago is old news; a question or a limit still waits for you.
-    if (kind === 'failed' && input.now - at > CENTRAL_WINDOW_MS) continue;
+    const at = eventTime(task, kind);
+    if (kind === 'failed' && !counts(kind, at, input.now)) continue;
     const event: CentralEvent = { taskId: task.id, projectId: project.id, projectName: project.name, title: task.title, kind, at };
     const card = cards.get(project.id) ?? { projectId: project.id, name: project.name, leaders: [], running: 0, needs: 0, finished: 0, failed: 0, events: [], latest: 0 };
     cards.set(project.id, card);
     if (kind === 'needs' || kind === 'limited') card.needs++; else card[kind]++;
-    if (kind === 'needs' || kind === 'limited' || kind === 'failed') attention.push(event);
+    if (kind === 'failed') failures.push(event); else if (kind === 'needs' || kind === 'limited') attention.push(event);
     card.events.push(event);
     card.latest = Math.max(card.latest, at);
     const tree = input.tree(task);
@@ -69,7 +88,7 @@ export function buildCentral(input: CentralInput): CentralModel {
   const newest = (a: CentralEvent, b: CentralEvent) => b.at - a.at;
   for (const card of cards.values()) card.events = card.events.sort(newest).slice(0, EVENTS_PER_CARD);
   const ordered = [...cards.values()].sort((a, b) => b.needs - a.needs || b.failed - a.failed || b.latest - a.latest || a.name.localeCompare(b.name));
-  return { badge: attention.length, attention: attention.sort(newest).slice(0, ATTENTION_SHOWN), cards: ordered };
+  return { badge: attention.length + failures.length, attention: attention.sort(newest).slice(0, ATTENTION_SHOWN), attentionTotal: attention.length, failures: failures.sort(newest).slice(0, ATTENTION_SHOWN), failuresTotal: failures.length, cards: ordered };
 }
 
 /** "just now", "5 min ago", "3 h ago", "2 d ago". */

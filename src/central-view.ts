@@ -17,8 +17,9 @@ function cardHtml(card: CentralCard, now: number): string {
 
 /** The part of the board that follows the tasks; the composer is not in it. */
 export function centralBodyHtml(model: CentralModel, now: number): string {
-  const needs = model.attention.length
-    ? `<section class="central-attention" aria-label="Needs you"><h2 class="central-card-title">Needs you</h2><div class="central-events">${model.attention.map(event => eventButton(event, now, true)).join('')}</div></section>` : '';
+  const strip = (title: string, kind: string, events: CentralEvent[], total: number) => events.length
+    ? `<section class="central-attention" data-strip="${kind}" aria-label="${title}"><h2 class="central-card-title">${title}</h2><div class="central-events">${events.map(event => eventButton(event, now, true)).join('')}</div>${total > events.length ? `<p class="central-more">+${total - events.length} more</p>` : ''}</section>` : '';
+  const needs = strip('Needs you', 'needs', model.attention, model.attentionTotal) + strip('Failed', 'failed', model.failures, model.failuresTotal);
   const cards = model.cards.length
     ? `<div class="central-grid">${model.cards.map(card => cardHtml(card, now)).join('')}</div>`
     : '<p class="central-empty">No project has had activity in the last 24 hours.</p>';

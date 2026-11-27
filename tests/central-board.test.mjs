@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CENTRAL_WINDOW_MS, agoText, buildCentral, centralKind, eventText, isCentralProject } from '../src/central-board.ts';
+import { CENTRAL_WINDOW_MS, agoText, buildCentral, centralBadge, centralKind, eventText, isCentralProject } from '../src/central-board.ts';
 
 const now = 100 * 3_600_000;
 const projects = ['Tibia', 'BAMemory', 'Marcalle', 'Quiet'].map(name => ({ id: name.toLowerCase(), name, path: '/p/' + name }));
@@ -48,8 +48,11 @@ test('leaders carry N of M and the latest three events are newest first', () => 
 
 test('the attention strip lists waiting, limited and failed tasks newest first', () => {
   const model = buildCentral({ ...input, signal: t => ({ ...signals, m1: 'limited' })[t.id] ?? '' });
-  assert.deepEqual(model.attention.map(event => event.kind).sort(), ['failed', 'limited', 'needs', 'needs']);
+  assert.deepEqual(model.attention.map(event => event.kind).sort(), ['limited', 'needs', 'needs']);
+  assert.deepEqual(model.failures.map(event => event.kind), ['failed']);
+  assert.equal(model.badge, model.attentionTotal + model.failuresTotal, 'the badge counts exactly what the two strips list');
   assert.equal(model.badge, 4);
+  assert.equal(centralBadge({ ...input, signal: t => ({ ...signals, m1: 'limited' })[t.id] ?? '' }), 4, 'the closed-board count equals the open one');
   const old = buildCentral({ ...input, sessions: [task('x', 'tibia', 'Old failure', { status: 'error', lastResponseAt: now - 2 * CENTRAL_WINDOW_MS })], signal: () => 'failed' });
   assert.equal(old.badge, 0, 'a failure from days ago is not news');
 });

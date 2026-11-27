@@ -35,6 +35,24 @@ test.describe('Central', () => {
     expect(await board.locator('.central-scroll').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   });
 
+  test('Needs you and Failed are separate strips, the crown is gold and the last card clears the composer', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await open(page);
+    await page.locator('.central-entry').click();
+    const board = page.locator('#central-board');
+    await expect(board.locator('[data-strip=needs] .central-event')).toHaveCount(1);
+    await expect(board.locator('[data-strip=failed] .central-event')).toHaveCount(1);
+    await expect(board.locator('[data-strip=needs] .central-card-title')).toHaveText('Needs you');
+    await expect(board.locator('[data-strip=failed] .central-card-title')).toHaveText('Failed');
+    await expect(page.locator('.central-badge')).toHaveText('2');
+    const crown = await board.locator('.central-crown').first().evaluate(el => getComputedStyle(el).color);
+    expect(crown).toBe('rgb(200, 146, 26)');
+    await board.locator('.central-scroll').evaluate(el => { el.scrollTop = el.scrollHeight; });
+    const [last, composer] = await Promise.all([board.locator('.central-card').last().boundingBox(), board.locator('.central-ask').boundingBox()]);
+    expect(Math.max(...(await board.locator('.central-card').evaluateAll(cards => cards.map(card => card.getBoundingClientRect().bottom))))).toBeLessThanOrEqual(composer!.y);
+    expect(last).not.toBeNull();
+  });
+
   test('a click on an event opens that task and leaves the board', async ({ page }) => {
     await open(page);
     await page.locator('.central-entry').click();

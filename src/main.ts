@@ -156,7 +156,7 @@ import type { ArchitectView } from './architect';
 import { syncOverlayContext } from './overlay-client';
 import { initializeAgentUpdates } from './agent-updates';
 import { isChatProject, NO_PROJECT } from './chats';
-import { buildCentral, isCentralProject, type CentralModel } from './central-board';
+import { buildCentral, centralBadge, isCentralProject, type CentralInput } from './central-board';
 import { CENTRAL_SHELL, centralBodyHtml, centralSub } from './central-view';
 import { CONTEXT_LIMIT, mainContext, parseBtw, readLinks, sideTitle, writeLink, type BtwLink } from './btw';
 import { BtwPanel } from './btw-panel';
@@ -2293,7 +2293,11 @@ function taskSignal(s: Session, now: number): { status: string; statusLabel: str
   const word = status === 'attention' ? answer ? 'Answer' : 'Approval' : status === 'failed' ? statusLabel : status === 'limited' ? (limitReset(s.limitedUntil, now) ? `Limited · ${limitReset(s.limitedUntil, now)}` : 'Limited') : '';
   return { status, statusLabel, word };
 }
+/** Each task's tree is built once per render: the same answer for its row, its fold, its tip and the Central. */
+let leadTrees = new Map<string, LeadTree | null>();
+const leadTreeOf = (task: Session): LeadTree | null => { let tree = leadTrees.get(task.id); if (tree === undefined) leadTrees.set(task.id, tree = leadTreeFor(task)); return tree; };
 function renderNavigation(): void {
+  leadTrees = new Map();
   renderCentral();
   if (state.sessions.length) void loadLeadChildren();
   queueMicrotask(() => tiles.refresh());
@@ -2336,8 +2340,6 @@ function renderNavigation(): void {
   const visible = sections.rest;
   renderBots();
   // Each task's tree is built once per render: the same answer for its row, its fold and its tip.
-  const leadTrees = new Map<string, LeadTree | null>();
-  const leadTreeOf = (task: Session): LeadTree | null => { let tree = leadTrees.get(task.id); if (tree === undefined) leadTrees.set(task.id, tree = leadTreeFor(task)); return tree; };
   /** `card`: two lines (where, then what) for Active, Finished and Pinned; otherwise one line. */
   const row = (s: Session, card = false, reorderable = false, showProject = false): string => {
     const p = state.projects.find(p => p.id === s.projectId);
@@ -4575,19 +4577,18 @@ let centralOpen = false, centralBodyCache = '';
 const centralEnabled = (): boolean => localStorage.getItem('pandacode.central') !== 'false';
 const centralOn = (): boolean => centralOpen && centralEnabled();
 const centralTask = (task: Session): boolean => isCentralProject(state.projects.find(p => p.id === task.projectId));
-function centralModel(): CentralModel {
-  const now = Date.now();
-  return buildCentral({ projects: userProjects(), sessions: listedSessions(), now, signal: task => taskSignal(task, now).status, tree: leadTreeFor });
-}
+const centralInput = (now: number): CentralInput => ({ projects: userProjects(), sessions: listedSessions(), now, signal: task => taskSignal(task, now).status, tree: leadTreeOf });
 function renderCentral(): void {
   const row = document.querySelector<HTMLElement>('.sidebar-central')!;
   row.hidden = !centralEnabled();
   if (row.hidden) return;
-  const model = centralModel(), badge = row.querySelector<HTMLElement>('.central-badge')!, entry = row.querySelector<HTMLElement>('.central-entry')!;
-  badge.hidden = model.badge === 0; badge.textContent = String(model.badge);
-  entry.setAttribute('aria-label', model.badge ? `Central, ${model.badge} need a look` : 'Central');
-  entry.setAttribute('aria-pressed', String(centralOn()));
-  if (!centralOn()) return;
+  // Closed, only the badge is counted; the cards are built when the board is open.
+  const now = Date.now(), input = centralInput(now), open = centralOn(), model = open ? buildCentral(input) : null, count = model ? model.badge : centralBadge(input);
+  const badge = row.querySelector<HTMLElement>('.central-badge')!, entry = row.querySelector<HTMLElement>('.central-entry')!;
+  badge.hidden = count === 0; badge.textContent = String(count);
+  entry.setAttribute('aria-label', count ? `Central, ${count} need a look` : 'Central');
+  entry.setAttribute('aria-pressed', String(open));
+  if (!model) return;
   const html = centralBodyHtml(model, Date.now());
   if (html !== centralBodyCache) { centralBodyCache = html; document.querySelector('#central-board .central-body')!.innerHTML = html; }
   document.querySelector('#central-board .central-sub')!.textContent = centralSub(model);

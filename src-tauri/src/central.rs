@@ -20,6 +20,7 @@ const REPLY_CHARS: usize = 1500;
 const TITLE_CHARS: usize = 100;
 const TASKS_PER_PROJECT: usize = 8;
 const TASKS_ONE_PROJECT: usize = 30;
+const TASK_FILE: &str = "task-id";
 const SEND_NAME: &str = "pandacode_central_send_message";
 
 pub(crate) fn root() -> PathBuf {
@@ -30,7 +31,7 @@ fn same_dir(a: &Path, b: &Path) -> bool {
     a.canonicalize().unwrap_or_else(|_| a.to_path_buf()) == b.canonicalize().unwrap_or_else(|_| b.to_path_buf())
 }
 
-fn is_central_path(path: &str, root: &Path) -> bool {
+pub(crate) fn is_central_path(path: &str, root: &Path) -> bool {
     let path = Path::new(path);
     path.file_name().is_some_and(|name| name == FOLDER) && path.parent().is_some_and(|parent| same_dir(parent, root))
 }
@@ -47,10 +48,35 @@ fn project_id(store: &Store, root: &Path) -> Result<Option<String>> {
     Ok(None)
 }
 
-/// Whether a task is the Central's: the only one that gets the cross-project tools.
+fn stored_task(root: &Path) -> Option<String> {
+    std::fs::read_to_string(root.join(TASK_FILE)).ok().map(|id| id.trim().to_owned()).filter(|id| !id.is_empty())
+}
+
+/// Whether a task is the Central's: the one task whose id was stored when it was made, and the only one that gets
+/// the cross-project tools. Other tasks in the Central's project are ordinary and get nothing.
 pub(crate) fn is_central_task(store: &Store, root: &Path, session_id: &str) -> bool {
-    let path: Option<String> = store.db.query_row("SELECT p.path FROM sessions s JOIN projects p ON p.id=s.project_id WHERE s.id=?1", [session_id], |row| row.get(0)).optional().ok().flatten();
-    path.is_some_and(|path| is_central_path(&path, root))
+    stored_task(root).is_some_and(|id| id == session_id) && store.session(session_id).is_ok()
+}
+
+/// Whether a project is the Central's own, which no task may create tasks in or list.
+pub(crate) fn is_central_project(store: &Store, root: &Path, project_id: &str) -> bool {
+    store.project(project_id).is_ok_and(|project| is_central_path(&project.path, root))
+}
+
+/// Refuses the Central's own folder as a project to register.
+pub(crate) fn refuse_folder(folder: &Path, root: &Path) -> Result<()> {
+    if is_central_path(&folder.to_string_lossy(), root) {
+        return Err("The Central's folder is closed to new projects.".into());
+    }
+    Ok(())
+}
+
+/// Refuses the Central's project as the place for a new task.
+pub(crate) fn refuse_project(store: &Store, root: &Path, project_id: &str) -> Result<()> {
+    if is_central_project(store, root, project_id) {
+        return Err("The Central's project is closed to new tasks.".into());
+    }
+    Ok(())
 }
 
 /// The Central task, made with its folder and project the first time it is asked for.
@@ -65,13 +91,20 @@ pub(crate) fn ensure(store: &Store, root: &Path, provider: &str, model: &str, mo
             project.id
         }
     };
-    let existing: Option<String> = store.db.query_row("SELECT id FROM sessions WHERE project_id=?1 AND archived=0 ORDER BY created_at LIMIT 1", [&project], |row| row.get(0)).optional().map_err(|e| e.to_string())?;
-    if let Some(id) = existing {
-        return store.session(&id);
+    if let Some(task) = stored_task(root).and_then(|id| store.session(&id).ok()).filter(|task| task.project_id == project && !task.archived) {
+        return Ok(task);
     }
-    let task = crate::architect::profiles::create_task_without_team(store, &project, provider, model, mode, None)?;
-    store.db.execute("UPDATE sessions SET title='Central' WHERE id=?1", params![task.id]).map_err(|e| e.to_string())?;
-    store.session(&task.id)
+    let existing: Option<String> = store.db.query_row("SELECT id FROM sessions WHERE project_id=?1 AND archived=0 ORDER BY created_at LIMIT 1", [&project], |row| row.get(0)).optional().map_err(|e| e.to_string())?;
+    let id = match existing {
+        Some(id) => id,
+        None => {
+            let task = crate::architect::profiles::create_task_without_team(store, &project, provider, model, mode, None)?;
+            store.db.execute("UPDATE sessions SET title='Central' WHERE id=?1", params![task.id]).map_err(|e| e.to_string())?;
+            task.id
+        }
+    };
+    std::fs::write(root.join(TASK_FILE), &id).map_err(|e| format!("Could not store the Central's task: {e}"))?;
+    store.session(&id)
 }
 
 fn clip(text: &str, chars: usize) -> (String, bool) {
@@ -142,7 +175,7 @@ pub(crate) fn overview(store: &Store, running: &HashSet<String>, root: &Path, on
 /// A task of any project but the Central's own, or an error naming nothing about other ids.
 fn target(store: &Store, root: &Path, id: &str) -> Result<Session> {
     let task = store.session(id).map_err(|_| "Unknown task.".to_owned())?;
-    if is_central_task(store, root, &task.id) {
+    if is_central_project(store, root, &task.project_id) {
         return Err("Unknown task.".into());
     }
     Ok(task)
@@ -223,7 +256,14 @@ async fn dispatch(app: &tauri::AppHandle, session_id: &str, name: &str, args: &V
         }
         "pandacode_central_read_task" => read_reply(&*state.store.lock().map_err(|e| e.to_string())?, &running, &root, &text("taskId")),
         _ => {
-            let task = target(&*state.store.lock().map_err(|e| e.to_string())?, &root, &text("taskId"))?;
+            // Read before the store lock: the remote state is never locked while the store is.
+            let (hosting, remote_full_access) = (crate::remote::hosting(app), crate::remote::full_access_for_remote_tasks(app));
+            let task = {
+                let store = crate::run_requests::lock_store(&state.store)?;
+                let task = target(&store, &root, &text("taskId"))?;
+                crate::agent_tools::allow_cross_thread_team(&store, session_id, &task.id, hosting, remote_full_access)?;
+                task
+            };
             if running.contains(&task.id) {
                 let entry = {
                     let store = crate::run_requests::lock_store(&state.store)?;
@@ -283,6 +323,40 @@ mod tests {
         assert!(!is_central_task(&store, &root, &other.id), "a task of an ordinary project gets no cross-project tools");
         assert!(!is_central_task(&store, &root, "nobody"));
         assert!(!is_central_task(&store, &dir.join("elsewhere"), &central.id), "the folder must sit in the Central's own root");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_second_task_in_the_central_project_gets_no_tools_and_the_project_is_closed() {
+        let (dir, root, store) = setup();
+        let central = ensure(&store, &root, "claude", "default", None).unwrap();
+        let second = crate::architect::profiles::create_task_without_team(&store, &central.project_id, "claude", "default", None, None).unwrap();
+        assert!(is_central_task(&store, &root, &central.id));
+        assert!(!is_central_task(&store, &root, &second.id), "only the stored Central task gets the tools");
+        assert_eq!(ensure(&store, &root, "claude", "default", None).unwrap().id, central.id);
+        assert_eq!(target(&store, &root, &second.id).unwrap_err(), "Unknown task.", "the Central's project is never a target");
+        assert!(refuse_project(&store, &root, &central.project_id).is_err(), "create_task into the Central is refused");
+        let other = project_with_task(&store, &dir, "work", "Real task");
+        assert!(refuse_project(&store, &root, &other.project_id).is_ok());
+        assert!(refuse_folder(&root.join(FOLDER), &root).is_err(), "create_project of the Central's folder is refused");
+        assert!(refuse_folder(&dir.join("work"), &root).is_ok());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_central_send_reaches_a_team_lead_only_past_the_remote_gate() {
+        let (dir, root, store) = setup();
+        let central = ensure(&store, &root, "claude", "default", None).unwrap();
+        let lead = project_with_task(&store, &dir, "work", "Lead");
+        store.db.execute("INSERT INTO architect_teams(session_id,content) VALUES(?1,'{}')", [&lead.id]).unwrap();
+        use crate::agent_tools::{allow_cross_thread_team as gate, CROSS_TEAM_REMOTE};
+        assert_eq!(gate(&store, &central.id, &lead.id, true, false), Err(CROSS_TEAM_REMOTE.into()));
+        assert!(gate(&store, &central.id, &lead.id, true, true).is_ok());
+        let source = include_str!("central.rs");
+        let send = &source[source.find("let task = {").unwrap()..];
+        assert!(send.find("allow_cross_thread_team(").unwrap() < send.find("launch_task_in_project(").unwrap());
+        assert!(send.find("allow_cross_thread_team(").unwrap() < send.find("message_queue::add(").unwrap());
+        assert!(send.find("remote::hosting(").is_none() || source.find("remote::hosting(").unwrap() < source.find("lock_store(&state.store)?;\n                let task").unwrap());
         let _ = std::fs::remove_dir_all(dir);
     }
 
