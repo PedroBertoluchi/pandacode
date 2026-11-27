@@ -9,7 +9,7 @@ import { historicalProvider } from './provider-handoff';
 import { isPreviewableFile } from './file-links';
 import { DISMISS_BATCH } from './thread-errors';
 import type { CommandPanel, GoalState } from './command-center';
-import { createPreviewArchitect } from './preview-architect';
+import { createPreviewArchitect, leadTreeId } from './preview-architect';
 import { namedTeamSetup } from './team-mode';
 import type { TeamSnapshot, TeamWorker } from './architect-types';
 import { createPreviewCloud, createPreviewVm } from './preview-vm';
@@ -100,6 +100,14 @@ for (const s of sessions) {
 }
 // One sample task already tracks a GitHub issue so chips have something to show.
 sessions[2].issue = { kind: 'issue', number: 131, url: 'https://github.com/orbit-labs/orbit/issues/131', title: 'Keyboard shortcut cheat sheet', state: 'open', checkedAt: now };
+// Leader tree showcase: ?leadtree adds a team leader (its workers are seeded by the preview architect) and a task with harness subagents.
+const leadTreeAgents: { sessionId: string; rows: unknown[] }[] = [];
+if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('leadtree')) {
+  const lead = (id: string, title: string, extra: Partial<Session> = {}): Session => ({ ...sessions[0], id, projectId: 'project-1', title, status: 'running', pinned: false, sidebarOrder: null, taskStage: 'in_progress', lastPromptAt: now - 600000, lastResponseAt: null, issue: undefined, pullRequest: undefined, ...extra } as Session);
+  sessions.unshift(lead(leadTreeId, 'Leader: SEO sweep for the home page'), lead('leadtree-agents', 'Refactor the settings store', { provider: 'claude', model: 'sonnet' }));
+  const agent = (id: string, name: string, status: string, prompt: string, started: number) => ({ id, parentId: null, name, prompt, status, response: '', toolCount: 3, startedAt: now - started, updatedAt: now - 20000 });
+  leadTreeAgents.push({ sessionId: 'leadtree-agents', rows: [agent('sub-1', 'Explore', 'running', 'Find every reader of the settings store', 240000), agent('sub-2', 'Test writer', 'completed', 'Add tests for the migration', 900000), agent('sub-3', 'Linter', 'failed', 'Run the linter on the changed files', 600000)] });
+}
 // Sidebar sections showcase: opt in with ?sections so default session counts stay unchanged.
 if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('sections')) {
   const sample = (id: string, projectId: string, title: string, extra: Partial<Session>): Session => ({ id, projectId, title, provider: 'claude', model: 'sonnet', mode: 'ask', status: 'idle', createdAt: now - 7200000, updatedAt: now - 60000, archived: false, worktreePath: null, resumeId: null, lastResponseAt: null, pinned: false, sidebarOrder: null, taskStage: 'review', taskDescription: '', completedAt: null, ...extra });
@@ -1880,6 +1888,9 @@ export async function invoke<T>(command: string, args: Record<string, any>): Pro
     case 'architect_set_council': result = architect.setCouncil(args.sessionId, args.council); break;
     case 'architect_council_accept': result = architect.councilAccept(args.sessionId); break;
     case 'architect_profiles': result = architect.profiles(); break;
+    case 'architect_set_default_parallel': result = architect.setDefaultParallel(args.count); break;
+    case 'architect_lead_teams': result = architect.leadTeams(); break;
+    case 'sidebar_subagents': result = leadTreeAgents; break;
     case 'architect_set_lead_guidance': result = architect.setLeadGuidance(args.guidance); break;
     case 'architect_save_profile': result = architect.saveProfile(args.id, args.name, args.setup); break;
     case 'architect_delete_profile': result = architect.deleteProfile(args.id); break;

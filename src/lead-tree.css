@@ -1,0 +1,41 @@
+/* The sidebar's leader tree: a crown on the task, its workers and subagents underneath on animated lines. */
+.sidebar{--crown:#c8921a}
+html[data-theme="dark"] .sidebar{--crown:#e8b84a}
+.sidebar .lead-crown{display:inline-flex;flex:none;color:var(--crown)}
+.sidebar .lead-crown .icon{--icon-size:var(--icon-sm);fill:color-mix(in srgb,var(--crown) 30%,transparent)}
+.sidebar .lead-progress{flex:none;font-size:var(--type-caption);line-height:var(--type-caption-leading);font-variant-numeric:tabular-nums;color:var(--muted)}
+.sidebar .lead-toggle{position:absolute;z-index:2;left:-7px;top:0;height:var(--tree-row);width:16px;display:grid;place-items:center;padding:0;border:0;background:transparent;color:var(--muted);border-radius:var(--ds-control-radius)}
+.sidebar .lead-toggle .icon{--icon-size:var(--icon-xs);rotate:0deg;transition:rotate var(--ds-ease-out) ease-out}
+.sidebar .lead-toggle[aria-expanded=true] .icon{rotate:90deg}
+.sidebar .lead-toggle:hover{color:var(--text)}
+.sidebar .task-row:has(>.task-item.has-tree)>.task-item{min-height:var(--tree-row)}
+.tip-bubble{white-space:pre-line}
+
+.sidebar .lead-tree{container-type:inline-size;display:flex;flex-direction:column;margin:0 0 4px 14px}
+.sidebar .lead-child{position:relative;display:flex;align-items:center;gap:5px;width:100%;min-height:26px;padding:0 6px 0 16px;border:0;border-radius:var(--ds-control-radius);background:transparent;color:var(--text);font-size:var(--type-body);text-align:left;min-width:0}
+.sidebar .lead-child:hover,.sidebar .lead-child:focus-visible{background:var(--raised)}
+.sidebar .lead-child{--line:var(--muted)}
+.sidebar .lead-child[data-state=running]{--line:var(--accent)}
+.sidebar .lead-child[data-state=waiting]{--line:var(--ds-warn)}
+.sidebar .lead-child[data-state=done]{--line:var(--ds-success)}
+.sidebar .lead-child[data-state=failed]{--line:var(--ds-danger)}
+.sidebar .lead-line{position:absolute;left:0;top:0;width:14px;height:100%;overflow:visible;pointer-events:none}
+.sidebar .lead-line path{fill:none;stroke:var(--line);stroke-width:1.5;vector-effect:non-scaling-stroke;stroke-linecap:butt}
+.sidebar .lead-child[data-state=queued] .lead-line path{stroke-dasharray:2 3;opacity:.7}
+.sidebar .lead-child[data-state=waiting] .lead-line path{stroke-dasharray:4 3}
+.sidebar .lead-child[data-state=running] .lead-line path{stroke-dasharray:4 3;animation:lead-flow .9s linear infinite}
+@keyframes lead-flow{to{stroke-dashoffset:-14}}
+.sidebar .lead-dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--line)}
+.sidebar .lead-child[data-state=running] .lead-dot{animation:state-pulse 1.6s ease-in-out infinite}
+.sidebar .lead-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sidebar .lead-child[data-state=done] .lead-name{color:var(--muted)}
+.sidebar .lead-kind{flex:none;display:inline-flex;color:var(--faint)}
+.sidebar .lead-kind .icon{--icon-size:var(--icon-xs);--icon-stroke:var(--icon-stroke-xs)}
+.sidebar .lead-context[data-high]{color:var(--ds-warn)}
+.sidebar .lead-word,.sidebar .lead-time,.sidebar .lead-context,.sidebar .lead-time,.sidebar .lead-context{flex:none;font-size:var(--type-caption);line-height:var(--type-caption-leading);color:var(--faint);font-variant-numeric:tabular-nums}
+.sidebar .lead-child[data-state=running] .lead-time{color:var(--accent-ink)}
+.sidebar .lead-child[data-state=waiting] .lead-word{color:var(--ds-warn)}
+.sidebar .lead-child[data-state=failed] .lead-word{color:var(--ds-danger)}
+@container (max-width:210px){.sidebar .lead-kind{display:none}}
+.sidebar .lead-limit{padding:2px 8px 0 16px;font-size:var(--type-caption);line-height:var(--type-caption-leading);color:var(--faint)}
+@media(prefers-reduced-motion:reduce){.sidebar .lead-child .lead-line path,.sidebar .lead-child .lead-dot{animation:none}.sidebar .lead-toggle .icon{transition:none}}

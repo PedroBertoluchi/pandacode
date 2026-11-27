@@ -244,7 +244,7 @@ const setup = (count = 2) => ({ architect: { provider: 'claude', model: 'sample-
 
 test('team profiles save templates separately from applying and inheriting the default', t => {
   const { api, host, parents, history, events } = fixture(t);
-  assert.deepEqual(api.profiles(), { enabled: false, lastSetup: null, activeProfileId: null, profiles: [] });
+  assert.deepEqual(api.profiles(), { enabled: false, lastSetup: null, activeProfileId: null, profiles: [], defaultParallel: 2 });
   const saved = api.saveProfile(undefined, '  Fast team  ', setup());
   const profile = saved.profiles[0];
   assert.equal(profile.name, 'Fast team');

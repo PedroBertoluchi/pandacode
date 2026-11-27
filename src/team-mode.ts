@@ -29,14 +29,14 @@ function rosterId(model: TeamModel, taken: ReadonlySet<string>): string {
 }
 
 /** The saved setup for a named team: its lead plus every model it may orchestrate. */
-export function namedTeamSetup(name: string, lead: TeamModel, models: readonly TeamModel[], limits?: TeamConfig | null): TeamSetup {
+export function namedTeamSetup(name: string, lead: TeamModel, models: readonly TeamModel[], limits?: TeamConfig | null, defaultParallel = 2): TeamSetup {
   const taken = new Set<string>();
   const workers: WorkerProfile[] = models.map(model => {
     const id = rosterId(model, taken); taken.add(id);
     return { id, name: `${model.name} · ${model.harness}`.slice(0, 80), provider: model.provider, model: model.model, reasoningEffort: model.reasoningEffort || null };
   });
   const architect: ModelSelection = { provider: lead.provider, model: lead.model, reasoningEffort: lead.reasoningEffort || null };
-  const config: TeamConfig = { auto: true, rosterOnly: true, name: name.trim(), workers, maxParallel: limits?.maxParallel ?? 0, maxRounds: limits?.maxRounds ?? 8, maxAssignments: limits?.maxAssignments ?? 24, workspace: 'shared', summaryLimit: limits?.summaryLimit ?? 3072, ...(limits?.leadGuidance ? { leadGuidance: limits.leadGuidance } : {}) };
+  const config: TeamConfig = { auto: true, rosterOnly: true, name: name.trim(), workers, maxParallel: limits?.maxParallel ?? defaultParallel, maxRounds: limits?.maxRounds ?? 8, maxAssignments: limits?.maxAssignments ?? 24, workspace: 'shared', summaryLimit: limits?.summaryLimit ?? 3072, ...(limits?.leadGuidance ? { leadGuidance: limits.leadGuidance } : {}) };
   return { architect, config };
 }
 

@@ -52,6 +52,8 @@ export interface TeamLibrary {
   profiles: TeamProfile[];
   /** Lead guidance for every team that does not set its own (Settings → Agents). */
   leadGuidance?: string | null;
+  /** Workers at once for a team with no saved setup to inherit (Settings → Agents); 0 is unlimited. */
+  defaultParallel?: number;
 }
 export interface WorkerCheckpoint {
   summary: string;

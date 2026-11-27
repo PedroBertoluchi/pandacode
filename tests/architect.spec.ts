@@ -540,7 +540,8 @@ test.describe('architect teams', () => {
       const host = root.querySelector(':scope > #team-progress-host');
       return Boolean(host?.previousElementSibling?.matches('[data-tool-key="tool:dispatch"], :has([data-tool-key="tool:dispatch"])'));
     })).toBe(true);
-    await tools.locator('.team-progress-toggle').click();
+    // Workers are at work, so the list opens by itself.
+    await expect(tools.locator('.team-progress-toggle')).toHaveAttribute('aria-expanded', 'true');
     await expect(tools.locator('.team-progress-worker[data-worker-id="build"]')).toBeVisible();
     await expect(tools.locator('.team-progress-worker[data-worker-id="review"]')).toBeVisible();
   });
@@ -1066,7 +1067,7 @@ test.describe('architect teams', () => {
       const builder = progress.locator('.team-progress-worker[data-worker-id="build"]');
       const reviewer = progress.locator('.team-progress-worker[data-worker-id="review"]');
       await expect(progress).toBeVisible();
-      await progress.locator('.team-progress-toggle').click();
+      await expect(progress.locator('.team-progress-toggle')).toHaveAttribute('aria-expanded', 'true');
       // One inline line per spawned worker, no card or team heading.
       await expect(builder).toContainText('Spawned Search indexing'); await expect(reviewer).toContainText('Spawned Accessibility audit');
       await expect(progress.locator('.team-progress-heading')).toHaveCount(0);

@@ -1522,6 +1522,36 @@ async fn list_subagents(
     task_subagents(&state, &session_id)
 }
 
+/// Subagents changed in the last two hours, per task: what the sidebar's trees draw under a task.
+const SIDEBAR_SUBAGENT_RECENT_MS: i64 = 2 * 60 * 60 * 1000;
+const SIDEBAR_SUBAGENT_TASKS: usize = 30;
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SidebarSubagents {
+    session_id: String,
+    rows: Vec<subagent_state::SubagentRow>,
+}
+/// Read once at launch; `subagent` events keep the rows current after that.
+#[tauri::command]
+async fn sidebar_subagents(state: State<'_, AppState>) -> Result<Vec<SidebarSubagents>> {
+    let mut tasks = state
+        .store
+        .lock()
+        .map_err(|error| error.to_string())?
+        .recent_subagent_sessions(storage::now() - SIDEBAR_SUBAGENT_RECENT_MS, SIDEBAR_SUBAGENT_TASKS)?;
+    let live: Vec<String> = lock_agents(&state.agents).map_err(|error| error.to_string())?.keys().cloned().collect();
+    for id in live {
+        if !tasks.contains(&id) { tasks.push(id); }
+    }
+    let mut all = Vec::new();
+    for session_id in tasks {
+        // A task deleted meanwhile has no children to draw.
+        let Ok(rows) = task_subagent_rows(&state, &session_id, false) else { continue };
+        if !rows.is_empty() { all.push(SidebarSubagents { session_id, rows }); }
+    }
+    Ok(all)
+}
+
 /// One child in full, for the row the user opened; `None` if it no longer exists.
 #[tauri::command]
 async fn get_subagent(
@@ -1539,11 +1569,16 @@ fn live_subagents(state: &AppState, session_id: &str) -> Result<Option<Arc<Mutex
 /// A task's children as list rows. Live snapshots are read after the store, so stale disk data
 /// can't beat an in-memory update or the final flush, and neither lock waits on the other.
 fn task_subagents(state: &AppState, session_id: &str) -> Result<Vec<subagent_state::SubagentRow>> {
+    task_subagent_rows(state, session_id, true)
+}
+
+/// `settle` retries an unfinished completion write; a listing passes false and only reads.
+fn task_subagent_rows(state: &AppState, session_id: &str, settle: bool) -> Result<Vec<subagent_state::SubagentRow>> {
     let live = {
         // Held only when no run owns the task, so none can start while its children are settled.
         let agents = lock_agents(&state.agents).map_err(|error| error.to_string())?;
         let live = agents.get(session_id).map(|agent| agent.subagents.clone());
-        if live.is_none() {
+        if live.is_none() && settle {
             let store = state.store.lock().map_err(|error| error.to_string())?;
             let task = store.session(session_id)?;
             // A mirror's children run on its host: they settle there while its turn is open.
@@ -5163,9 +5198,11 @@ pub(crate) fn main_invoke_handler(invoke: tauri::ipc::Invoke<tauri::Wry>) -> boo
         provider_settings::provider_set_mimo_endpoint,
         architect::profiles::architect_profiles,
         architect::profiles::architect_set_lead_guidance,
+        architect::profiles::architect_set_default_parallel,
         architect::profiles::architect_save_profile,
         architect::profiles::architect_delete_profile,
         architect::architect_get,
+        architect::architect_lead_teams,
         architect::architect_configure,
         architect::architect_set_council,
         architect::architect_council_accept,
@@ -5211,6 +5248,7 @@ pub(crate) fn main_invoke_handler(invoke: tauri::ipc::Invoke<tauri::Wry>) -> boo
         turn_changes::turn_change_diff,
         turn_changes::turn_change_summary,
         list_subagents,
+        sidebar_subagents,
         get_subagent,
         send_message,
         list_slash_commands,
