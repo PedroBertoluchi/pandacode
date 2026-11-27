@@ -92,7 +92,7 @@ fn listed_projects(store: &Store, root: &Path, only: Option<&str>) -> Result<Vec
         let (id, name, path) = row.map_err(|e| e.to_string())?;
         let folder = Path::new(&path);
         let hidden = is_central_path(&path, root) || crate::chats::is_chat_folder(folder) || folder.parent().is_some_and(|parent| same_dir(parent, &crate::bots::workspace_root()));
-        if !hidden && only.map_or(true, |only| only == id) {
+        if !hidden && only.is_none_or(|only| only == id) {
             projects.push((id, name));
         }
     }
