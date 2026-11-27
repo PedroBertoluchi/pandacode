@@ -796,9 +796,9 @@ const contextControl = createContextControl({
     const s = session();
     if (!s || s.id !== sessionId) return null;
     const stream = state.streams.get(s.id);
-    return { usage: stream?.contextUsage ?? s.contextUsage ?? null, lastResponseAt: Math.max(s.lastResponseAt ?? 0, stream?.lastResponseAt ?? 0) || null, running: isRunning(s.id) };
+    return { usage: stream?.contextUsage ?? s.contextUsage ?? null, lastResponseAt: Math.max(s.lastResponseAt ?? 0, stream?.lastResponseAt ?? 0) || null, running: isRunning(s.id), provider: s.provider, lead: Boolean(teams.get(s.id)) };
   },
-  handoff: (sessionId, messageId) => forkAtMessage(sessionId, messageId),
+  handoff: (sessionId, messageId) => forkAtMessage(sessionId, messageId, undefined, true),
 });
 /* Council: an automatic team whose reviewers score the work until they reach the user's target. */
 const council = createCouncil({
@@ -4946,22 +4946,22 @@ async function mirrorMessages(event: { sessionId: string; older?: boolean }): Pr
 
 const pendingMessageForks = new Set<string>();
 /** `draft` makes an Edit: the fork stops before the message, which waits in the composer. */
-async function forkAtMessage(sessionId: string, messageId: number, draft?: string): Promise<void> {
+async function forkAtMessage(sessionId: string, messageId: number, draft?: string, handoff = false): Promise<void> {
   const key = JSON.stringify([sessionId, messageId]);
   if (pendingMessageForks.has(key)) return;
   pendingMessageForks.add(key);
   const generation = state.generation;
   try {
-    const fork = await call<Session>('fork_session_at_message', { sessionId, messageId, exclusive: draft !== undefined });
+    const fork = await (handoff ? call<Session>('handoff_to_new_chat', { sessionId, messageId }) : call<Session>('fork_session_at_message', { sessionId, messageId, exclusive: draft !== undefined }));
     state.sessions = [fork, ...state.sessions.filter(task => task.id !== fork.id)];
     if (draft) state.drafts.set(fork.id, draft);
     if (generation === state.generation) {
       await selectSession(fork.id, true);
       if (draft !== undefined) document.querySelector<HTMLTextAreaElement>('#prompt')?.focus();
-      notify(draft !== undefined ? 'Rewound to before your message. Edit it and send.' : 'Conversation forked. Both tasks use the same checkout.');
+      notify(handoff ? 'Handed off to a new chat with the recent messages. Both tasks use the same checkout.' : draft !== undefined ? 'Rewound to before your message. Edit it and send.' : 'Conversation forked. Both tasks use the same checkout.');
     } else {
       scheduleNavigation();
-      notify('Conversation forked. Your new task is in the task list.');
+      notify(handoff ? 'Handed off to a new chat. Your new task is in the task list.' : 'Conversation forked. Your new task is in the task list.');
     }
   } finally { pendingMessageForks.delete(key); }
 }
@@ -6629,8 +6629,11 @@ function onAgent(event: AgentEvent): void {
   // Native reports each steer's pending, delivered or failed state.
   if (event.kind === 'steer') { steerEvent(event); return; }
   const s = state.sessions.find(s => s.id === event.sessionId);
+  if (event.kind === 'text' || event.kind === 'usage' || event.kind === 'tool' || (event.kind as string) === 'thinking') contextControl.activity(event.sessionId);
   if (event.kind === 'usage') {
     const usage = parseContextUsage(event.data);
+    const ttl = (event.data as { cacheTtlMs?: unknown } | undefined)?.cacheTtlMs;
+    if (typeof ttl === 'number' && Number.isSafeInteger(ttl) && ttl > 0 && ttl <= 86_400_000) contextControl.reportTtl(event.sessionId, ttl);
     if (s && usage) {
       s.contextUsage = usage;
       const current = state.streams.get(s.id); if (current) current.contextUsage = usage;
@@ -6640,6 +6643,7 @@ function onAgent(event: AgentEvent): void {
     return;
   }
   if (event.kind === 'done') {
+    contextControl.refresh();
     subagents.runEnded(event.sessionId);
     if (s) refreshFileLinks(workspaceContext(s));
     void detectPullRequest(event.sessionId);

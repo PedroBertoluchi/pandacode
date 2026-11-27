@@ -5168,6 +5168,7 @@ pub(crate) fn main_invoke_handler(invoke: tauri::ipc::Invoke<tauri::Wry>) -> boo
         task_controls::set_task_preference,
         task_controls::fork_codex_task,
         task_controls::fork_session_at_message,
+        task_controls::handoff_to_new_chat,
         task_controls::get_message_content,
         task_controls::archive_codex_task,
         task_controls::export_task,

@@ -317,15 +317,17 @@ impl Store {
     /// What the composer's Context control shows besides the token reading: how many times this
     /// thread's context was handed to another harness (the partial handoff index) or compacted by
     /// the harness (the `Compact context` tool rows both Claude Code and Codex record), and the
-    /// newest saved user or assistant message, which a handoff to a new chat forks at.
+    /// newest saved user or assistant message, which a handoff to a new chat forks at. Rows copied in
+    /// by a fork or an import are older than the task itself and the fork's own "Forked conversation"
+    /// notice is not a switch, so neither counts: the numbers are what happened in this task.
     pub fn context_stats(&self, sid: &str) -> Result<ContextStats> {
         self.require_session(sid)?;
         let handoffs = self.db
-            .query_row("SELECT COUNT(*) FROM messages WHERE session_id=?1 AND role='handoff'", [sid], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM messages WHERE session_id=?1 AND role='handoff' AND created_at>=(SELECT created_at FROM sessions WHERE id=?1) AND instr(content,'Forked conversation.')=0", [sid], |row| row.get(0))
             .map_err(|e| e.to_string())?;
         let compactions = self.db
             .query_row(
-                "SELECT COUNT(*) FROM messages WHERE session_id=?1 AND role='tool' AND instr(content,'\"name\":\"Compact context\"')>0 AND instr(content,'\"status\":\"completed\"')>0",
+                "SELECT COUNT(*) FROM messages WHERE session_id=?1 AND role='tool' AND instr(content,'\"name\":\"Compact context\"')>0 AND instr(content,'\"status\":\"completed\"')>0 AND created_at>=(SELECT created_at FROM sessions WHERE id=?1)",
                 [sid],
                 |row| row.get(0),
             )

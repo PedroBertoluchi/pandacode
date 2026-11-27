@@ -5,16 +5,16 @@
 .composer-context-pill .ctx-meter{flex:none;width:28px;min-width:28px;height:4px}
 .composer-context-pill[data-tone="warn"] .ctx-meter{color:var(--ds-meter-warn,var(--ds-warn))}
 .composer-context-pill[data-tone="warn"] .ctx-percent{color:var(--ds-warn)}
-.composer-context-pill .ctx-percent{min-width:3ch;text-align:end}
-.composer-context-pill .ctx-cache{display:inline-block;min-width:15ch;overflow:hidden;text-overflow:ellipsis}
-.composer-context-pill[data-cache="cold"] .ctx-cache{min-width:0}
+/* Fixed boxes for the readings, so a new percent or a flip between warm and cold never moves what is to the right. */
+.composer-context-pill .ctx-percent{min-width:5ch;text-align:end}
+.composer-context-pill .ctx-cache{display:inline-block;min-width:17ch;text-align:start;overflow:hidden;text-overflow:ellipsis}
 .composer-context-pill .ctx-dot{display:none;flex:none;width:6px;height:6px;border-radius:50%;background:var(--muted)}
 .composer-context-pill[data-cache="warm"] .ctx-dot{background:var(--ds-success)}
 @container composer (max-width:600px){.composer-context-pill .ctx-sep,.composer-context-pill .ctx-cache{display:none}.composer-context-pill .ctx-dot{display:block}.composer-context-pill{padding:0 8px}}
 @container composer (max-width:520px){.composer-context-pill .ctx-meter{display:none}}
 
 .ctx-panel{position:fixed;z-index:90;max-height:min(520px,calc(100dvh - 90px));overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;font-size:var(--type-meta);border-radius:var(--ds-card-radius)}
-.ctx-head strong{font-size:var(--type-heading);font-weight:var(--type-heading-weight);line-height:var(--type-heading-leading);letter-spacing:var(--tracking-tight)}
+.ctx-title{font-size:var(--type-heading);font-weight:var(--type-heading-weight);line-height:var(--type-heading-leading);letter-spacing:var(--tracking-tight)}
 .ctx-rows{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0}
 .ctx-rows dt{color:var(--muted)}
 .ctx-rows dd{margin:0;text-align:end;font-variant-numeric:tabular-nums;min-width:0;overflow-wrap:anywhere}

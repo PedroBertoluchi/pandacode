@@ -1887,7 +1887,7 @@ const WEB_ALLOWED_COMMANDS: &[&str] = &[
     "cloud_disconnect", "cloud_set_inherit_environment", "cloud_setup_sandboxes", "cloud_instabox_images",
     "cloud_instabox_set_image", "cloud_machines", "cloud_create", "cloud_power", "cloud_frame", "cloud_input",
     "themes_list", "theme_import", "theme_install", "theme_remove", "token_saver_tools", "token_saver_install",
-    "task_token_usage", "task_context_stats", "skill_manager_list", "skill_manager_set", "skill_manager_reset",
+    "task_token_usage", "task_context_stats", "handoff_to_new_chat", "skill_manager_list", "skill_manager_set", "skill_manager_reset",
     "skill_manager_restore", "skill_manager_uninstall", "skill_manager_undo_uninstall", "skill_manager_preview",
     "skill_manager_add", "skill_manager_add_library", "skills_list", "skills_import_folder",
     "skills_import_github", "skills_activate", "skills_deactivate", "skills_deactivate_all", "skills_matrix",
