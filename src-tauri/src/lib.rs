@@ -5304,6 +5304,7 @@ pub(crate) fn main_invoke_handler(invoke: tauri::ipc::Invoke<tauri::Wry>) -> boo
         token_saver::token_saver_tools,
         token_saver::token_saver_install,
         task_usage::task_token_usage,
+        task_usage::task_context_stats,
         skill_manager::skill_manager_list,
         skill_manager::skill_manager_set,
         skill_manager::skill_manager_reset,
