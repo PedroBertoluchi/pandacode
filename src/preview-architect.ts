@@ -20,6 +20,8 @@ interface TeamRun { snapshot: TeamSnapshot; runs: WorkerRun[]; batchStart: numbe
 
 const storageKey = 'pandacode.preview.architect-configs';
 const libraryKey = 'pandacode.preview.architect-library';
+const leadtree = typeof location !== 'undefined' && new URLSearchParams(location.search).has('leadtree');
+export const leadTreeId = 'leadtree-lead';
 const showcase = typeof location !== 'undefined' && new URLSearchParams(location.search).has('workers');
 const sampleNotice = 'Browser preview — sample output only. No model, command, or file operation is running.';
 
@@ -27,7 +29,7 @@ const sampleNotice = 'Browser preview — sample output only. No model, command,
 export function createPreviewArchitect(host: PreviewHost) {
   const teams = new Map<string, TeamRun>();
   const configs = new Map<string, TeamConfig>();
-  let library: TeamLibrary = { enabled: false, lastSetup: null, activeProfileId: null, profiles: [] };
+  let library: TeamLibrary = { enabled: false, lastSetup: null, activeProfileId: null, profiles: [], defaultParallel: 2 };
 
   function integer(value: unknown, low: number, high: number, label: string): number {
     if (!Number.isInteger(value) || Number(value) < low || Number(value) > high) throw new Error(`${label} must be between ${low} and ${high}.`);
@@ -107,14 +109,47 @@ export function createPreviewArchitect(host: PreviewHost) {
           ids.add(profile.id); names.add(key);
         } catch { /* Invalid older templates do not hide other saved profiles. */ }
       }
-      library = { enabled: saved.enabled === true && lastSetup !== null, lastSetup, profiles, activeProfileId: profiles.some(profile => profile.id === saved.activeProfileId) ? saved.activeProfileId : null };
+      library = { enabled: saved.enabled === true && lastSetup !== null, lastSetup, profiles, activeProfileId: profiles.some(profile => profile.id === saved.activeProfileId) ? saved.activeProfileId : null, defaultParallel: Number.isInteger(saved.defaultParallel) ? saved.defaultParallel : 2 };
     } else if (configs.size) {
       const newest = [...configs].sort(([a], [b]) => host.parent(b).updatedAt - host.parent(a).updatedAt)[0];
-      library = { enabled: true, lastSetup: validateSetup({ architect: parentSelection(host.parent(newest[0])), config: newest[1] }), activeProfileId: null, profiles: [] };
+      library = { enabled: true, lastSetup: validateSetup({ architect: parentSelection(host.parent(newest[0])), config: newest[1] }), activeProfileId: null, profiles: [], defaultParallel: 2 };
       persistLibrary();
     }
   } catch { /* Corrupt or inaccessible preview storage starts with a disabled default. */ }
   function profiles(): TeamLibrary { return structuredClone(library); }
+  function setDefaultParallel(count: unknown): TeamLibrary {
+    library = { ...library, defaultParallel: integer(count, 0, 64, 'Workers at once') };
+    persistLibrary();
+    return profiles();
+  }
+  /** `?leadtree`: a leader with a worker in every state, for the sidebar tree. */
+  function seedLeadTree(parent: Session): void {
+    const now = Date.now(), minute = 60_000;
+    const profiles: WorkerProfile[] = [
+      { id: 'builder', name: 'Builder', provider: 'codex', model: 'gpt-6-astra', reasoningEffort: 'high' },
+      { id: 'reviewer', name: 'Reviewer', provider: 'claude', model: 'sonnet', reasoningEffort: 'medium' },
+    ];
+    const config: TeamConfig = { auto: true, workers: profiles, maxParallel: 2, maxRounds: 4, maxAssignments: 8, workspace: 'shared', summaryLimit: 1800 };
+    const sample = (id: string, profile: number, name: string, changes: Partial<TeamWorker>): TeamWorker => ({
+      ...profiles[profile], id, name, sessionId: `${parent.id}-tree-${id}`, profileId: profiles[profile].id, status: 'running',
+      assignment: `${name}. ${sampleNotice}`, summary: '', dependsOn: [], files: [], attempt: 1, createdAt: now - 30 * minute, updatedAt: now - minute, ...changes,
+    });
+    const workers: TeamWorker[] = [
+      sample('seo', 0, 'Technical SEO', { status: 'completed', summary: 'Fixed the sitemap and the canonical tags.', createdAt: now - 50 * minute }),
+      sample('rivals', 1, 'Competitors in Brazil', { startedAt: now - 7 * minute, createdAt: now - 20 * minute }),
+      sample('copy', 0, 'Positioning and messaging', { status: 'waiting', startedAt: now - 12 * minute, createdAt: now - 19 * minute }),
+      sample('home', 1, 'Home page review', { status: 'queued', createdAt: now - 10 * minute }),
+      sample('audit', 0, 'Accessibility audit', { status: 'failed', error: 'The sample build step failed.', createdAt: now - 40 * minute, updatedAt: now - 9 * minute }),
+      sample('docs', 1, 'Write the report', { startedAt: now - 2 * minute, createdAt: now - 3 * minute }),
+    ];
+    const runs = workers.map((worker): WorkerRun => ({ worker, output: '', cursor: 0, messages: [{ id: host.nextMessageId(), sessionId: worker.sessionId, role: 'user', content: worker.assignment, createdAt: worker.createdAt }] }));
+    teams.set(parent.id, { snapshot: { sessionId: parent.id, config, status: 'running', round: 1, revision: 1, workers, updatedAt: now }, runs, batchStart: 0, messages: [] });
+  }
+  function leadTeams(): { teams: TeamSnapshot[]; contexts: { sessionId: string; usedTokens: number; contextWindow: number | null }[] } {
+    if (leadtree && !teams.has(leadTreeId)) seedLeadTree(host.parent(leadTreeId));
+    const led = [...teams.values()].filter(team => team.snapshot.workers.length).map(team => structuredClone(team.snapshot));
+    return { teams: led, contexts: led.flatMap(team => team.workers.map((worker, index) => ({ sessionId: worker.sessionId, usedTokens: 20_000 + index * 18_000, contextWindow: 200_000 }))) };
+  }
   function setLeadGuidance(guidance: unknown): TeamLibrary {
     const text = typeof guidance === 'string' ? guidance.trim() : '';
     if (text.includes('\0')) throw new Error('Lead guidance must be plain text.');
@@ -522,5 +557,5 @@ export function createPreviewArchitect(host: PreviewHost) {
     }
     persist();
   }
-  return { get, configure, setCouncil, seedCouncil, councilSeat, councilAsk, councilAccept, profiles, setLeadGuidance, saveProfile, deleteProfile, inherit, start, control, workerMessages, teamMessages, remove, isActive: (sessionId: string) => active(teams.get(sessionId)) };
+  return { get, configure, setCouncil, seedCouncil, councilSeat, councilAsk, councilAccept, profiles, setLeadGuidance, setDefaultParallel, leadTeams, saveProfile, deleteProfile, inherit, start, control, workerMessages, teamMessages, remove, isActive: (sessionId: string) => active(teams.get(sessionId)) };
 }

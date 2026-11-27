@@ -182,6 +182,32 @@ fn new_user_tasks_default_to_full_without_overriding_requested_modes_or_saved_ta
 }
 
 #[test]
+fn new_teams_start_at_two_workers_at_once_and_the_setting_survives_reopen() {
+    let disk = Disk::new();
+    let store = Store::open(&disk.database()).unwrap();
+    assert_eq!(read(&store).unwrap().default_parallel, 2);
+    // A library saved before the setting existed reads as the default.
+    let mut json = library_json(&store);
+    json.as_object_mut().unwrap().remove("defaultParallel");
+    let parsed: TeamLibrary = serde_json::from_value(json).unwrap();
+    assert_eq!(parsed.default_parallel, DEFAULT_PARALLEL);
+    assert_eq!(set_default_parallel(&store, 0).unwrap().default_parallel, 0, "0 is unlimited");
+    assert_eq!(set_default_parallel(&store, 5).unwrap().default_parallel, 5);
+    assert!(set_default_parallel(&store, 65).is_err());
+    drop(store);
+    let store = Store::open(&disk.database()).unwrap();
+    assert_eq!(read(&store).unwrap().default_parallel, 5);
+    // A team's saved setup keeps its own limit whatever the default says.
+    let source = task(&store);
+    let state = state(store);
+    let mut saved = setup();
+    saved.config.max_parallel = 7;
+    apply(&state, &source.id, &saved, None).unwrap();
+    let store = state.store.lock().unwrap();
+    set_default_parallel(&store, 2).unwrap();
+    assert_eq!(read(&store).unwrap().last_setup.unwrap().config.max_parallel, 7);
+}
+#[test]
 fn new_user_conversation_and_board_inherit_but_raw_workers_and_agent_tasks_do_not() {
     let store = Store::open(std::path::Path::new(":memory:")).unwrap();
     let source = task(&store);

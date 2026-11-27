@@ -147,6 +147,9 @@ import { attachmentChips, parseAttachments } from './message-attachments';
 import { compactSublines, infoMark, installTooltips } from './tooltip';
 import { isMac, shortcut } from './platform';
 import { createGoalBanner, showGoalDialog, showCommandCenter, type GoalState, type GoalAction, type CommandPanel } from './command-center';
+import { buildLeadTree, SUBAGENT_RECENT_MS, type ContextUse, type LeadTree, type TreeAgent, type WorkerContext } from './lead-tree.ts';
+import { crownHtml, leadTipFor, leadToggleHtml, progressHtml, treeHtml } from './lead-tree-view';
+import './lead-tree.css';
 import { LEAD_RETRY, teamActive, teamHeldUntil, type TeamSnapshot, type TeamEvent, type TeamLibrary, type TeamProfile, type TeamConfig, type WorkerProfile } from './architect-types';
 import type { ArchitectView } from './architect';
 import { syncOverlayContext } from './overlay-client';
@@ -291,6 +294,71 @@ function chooseInspector(open: boolean): boolean {
 type ThreadPanel = { workspace: string; tab: typeof state.inspectorTab; folders: string[]; file: string; kind: typeof state.selectedKind; staged: boolean; context?: FileLinkContext; browserUrl: string };
 const threadPanels = new Map<string, ThreadPanel>();
 const teams = new Map<string, TeamSnapshot | null>();
+/** Leaders whose workers the sidebar folds, kept across launches. */
+const COLLAPSED_LEADS_KEY = 'pandacode.sidebar.collapsedLeads';
+const collapsedLeads = readCollapsed(localStorage, COLLAPSED_LEADS_KEY);
+/** Harness subagents per task and the context stored for each worker session: what the leader trees read. */
+const leadAgents = new Map<string, Map<string, TreeAgent>>();
+const workerContexts = new Map<string, ContextUse>();
+const treeLookup: WorkerContext = {
+  needsInput: sessionId => architectView?.needsInput(sessionId) ?? false,
+  modelName: worker => { const provider = state.providers.find(p => p.id === worker.provider); return provider?.models.find(model => model.id === worker.model)?.name ?? fallbackModel(worker.provider, worker.model).name; },
+  context: sessionId => workerContexts.get(sessionId) ?? null,
+};
+const workerSessionIds = new Set<string>();
+const trackWorkers = (team: TeamSnapshot | null): void => { for (const worker of team?.workers ?? []) workerSessionIds.add(worker.sessionId); };
+const leadTreeFor = (task: Session) => buildLeadTree({ team: teams.get(task.id), agents: [...leadAgents.get(task.id)?.values() ?? []], now: Date.now(), lookup: treeLookup });
+function noteLeadAgent(sessionId: string, value: unknown): void {
+  const agent = value as Partial<TreeAgent> & { tools?: { name: string; status: string }[] } | null;
+  if (!agent || typeof agent.id !== 'string' || !['running', 'waiting', 'completed', 'failed', 'stopped'].includes(agent.status as string)) return;
+  const known = leadAgents.get(sessionId)?.get(agent.id);
+  const step = agent.tools?.filter(tool => tool.status === 'running').pop()?.name ?? known?.step ?? null;
+  const next: TreeAgent = { id: agent.id, name: String(agent.name ?? ''), status: agent.status as TreeAgent['status'], startedAt: Number(agent.startedAt) || known?.startedAt || Date.now(), updatedAt: Number(agent.updatedAt) || Date.now(), prompt: agent.prompt || known?.prompt, step };
+  let task = leadAgents.get(sessionId); if (!task) leadAgents.set(sessionId, task = new Map());
+  task.set(next.id, next);
+  scheduleLeadExpiry();
+  if (!known || known.status !== next.status) scheduleNavigation();
+}
+let leadExpiry = 0;
+/** One timer, set for the next settled subagent to age out of its leader's tree; nothing polls. */
+function scheduleLeadExpiry(): void {
+  clearTimeout(leadExpiry); leadExpiry = 0;
+  let next = Infinity;
+  const now = Date.now();
+  for (const [sessionId, agents] of leadAgents) {
+    for (const [id, agent] of agents) {
+      if (agent.status === 'running' || agent.status === 'waiting') continue;
+      const at = agent.updatedAt + SUBAGENT_RECENT_MS;
+      if (at <= now) agents.delete(id); else next = Math.min(next, at);
+    }
+    if (!agents.size) leadAgents.delete(sessionId);
+  }
+  if (next === Infinity) return;
+  leadExpiry = window.setTimeout(() => { leadExpiry = 0; scheduleNavigation(); scheduleLeadExpiry(); }, next - now + 1000);
+}
+let leadChildrenLoaded = false, leadLoadFailed = false;
+const LEAD_LOAD_RETRY_MS = 30_000;
+/** Once at launch: every leader's team and subagents, stored context included. Events keep them current after that. */
+async function loadLeadChildren(): Promise<void> {
+  if (leadChildrenLoaded) return;
+  leadChildrenLoaded = true;
+  try {
+    const [{ teams: led, contexts }, rows] = await Promise.all([
+      call<{ teams: TeamSnapshot[]; contexts: { sessionId: string; usedTokens: number; contextWindow: number | null }[] }>('architect_lead_teams'),
+      call<{ sessionId: string; rows: TreeAgent[] }[]>('sidebar_subagents'),
+    ]);
+    for (const team of led) if (!teams.has(team.sessionId)) { teams.set(team.sessionId, team); trackWorkers(team); }
+    for (const item of contexts) workerContexts.set(item.sessionId, { usedTokens: item.usedTokens, contextWindow: item.contextWindow });
+    for (const { sessionId, rows: agents } of rows) { const task = leadAgents.get(sessionId) ?? new Map<string, TreeAgent>(); for (const agent of agents) if (!task.has(agent.id)) task.set(agent.id, agent); leadAgents.set(sessionId, task); }
+    scheduleLeadExpiry();
+    scheduleNavigation();
+  } catch (cause) {
+    // Stay marked as loaded so renders do not retry; one retry after a pause, and only its failure is reported.
+    if (leadLoadFailed) { report(cause); return; }
+    leadLoadFailed = true;
+    window.setTimeout(() => { leadChildrenLoaded = false; void loadLeadChildren(); }, LEAD_LOAD_RETRY_MS);
+  }
+}
 let architectView: ArchitectView | undefined;
 let architectLoading: Promise<ArchitectView> | undefined;
 let architectSetupCleanup: (() => void) | undefined;
@@ -324,7 +392,7 @@ function onArchitect(team: TeamEvent): void {
   // Asking is announced once, by the composer's live region, so it gets no toast as well.
   if (team.sessionId === state.sessionId && team.error && team.error !== current?.error && team.councilStatus?.state !== 'asking' && !/^Team (paused|stopped)\./.test(team.error) && !LEAD_RETRY.test(team.error)) notify(councilNotice(team) ?? team.error);
   const wasActive = teamActive(current);
-  teams.set(team.sessionId, team);
+  teams.set(team.sessionId, team); trackWorkers(team);
   const task = state.sessions.find(s => s.id === team.sessionId), taskState = `${task?.status}:${task?.taskStage}`;
   if (task && teamActive(team)) { task.status = 'running'; task.taskStage = 'in_progress'; }
   if (task && !teamActive(team) && !state.streams.has(task.id)) task.status = 'idle';
@@ -353,9 +421,9 @@ async function loadTeam(id: string): Promise<TeamSnapshot | null> {
   if (deletedSessions.has(id)) return null;
   // An update or a removal that arrived during the fetch is newer than this snapshot.
   if (teams.has(id) !== known || teams.get(id) !== before) return teams.get(id) ?? null;
-  teams.set(id, loaded);
+  teams.set(id, loaded); trackWorkers(loaded);
   // A remembered thread keeps its answer: coming back to it must not wait for its team again (selectSession).
-  if (teams.size > 64) { const old = [...teams].find(([key, value]) => key !== state.sessionId && !threadPages.has(key) && !teamActive(value)); if (old) teams.delete(old[0]); }
+  if (teams.size > 64) { const old = [...teams].find(([key, value]) => key !== state.sessionId && !threadPages.has(key) && !teamActive(value) && !value?.workers.length); if (old) teams.delete(old[0]); }
   if (loaded) await ensureArchitectView();
   if (id === state.sessionId) architectView?.setTask(id, loaded, state.providers);
   return loaded;
@@ -609,7 +677,7 @@ async function showTeamMenu(anchor: HTMLElement): Promise<void> {
 async function autoTeamConfig(base?: TeamConfig): Promise<TeamConfig> {
   const [library, { roster, catalog }] = await Promise.all([base ? Promise.resolve(null) : call<TeamLibrary>('architect_profiles'), Promise.resolve(knownProviders()).then(providers => installedCatalog(providers, loadModels))]);
   const limits = base ?? library?.lastSetup?.config;
-  return { auto: true, workers: roster, catalog, maxParallel: limits?.maxParallel ?? 0, maxRounds: limits?.maxRounds ?? 8, maxAssignments: limits?.maxAssignments ?? 24, workspace: 'shared', summaryLimit: limits?.summaryLimit ?? 3072 };
+  return { auto: true, workers: roster, catalog, maxParallel: limits?.maxParallel ?? library?.defaultParallel ?? 2, maxRounds: limits?.maxRounds ?? 8, maxAssignments: limits?.maxAssignments ?? 24, workspace: 'shared', summaryLimit: limits?.summaryLimit ?? 3072 };
 }
 /** Warms Panda Router's profiler when a team starts; failures only reach the console. */
 function prepareModelRouting(): void {
@@ -2215,6 +2283,7 @@ function taskSignal(s: Session, now: number): { status: string; statusLabel: str
   return { status, statusLabel, word };
 }
 function renderNavigation(): void {
+  if (state.sessions.length) void loadLeadChildren();
   queueMicrotask(() => tiles.refresh());
   // The crash notice's agents sentence goes once no task is left Interrupted.
   tasksChanged();
@@ -2254,6 +2323,9 @@ function renderNavigation(): void {
   });
   const visible = sections.rest;
   renderBots();
+  // Each task's tree is built once per render: the same answer for its row, its fold and its tip.
+  const leadTrees = new Map<string, LeadTree | null>();
+  const leadTreeOf = (task: Session): LeadTree | null => { let tree = leadTrees.get(task.id); if (tree === undefined) leadTrees.set(task.id, tree = leadTreeFor(task)); return tree; };
   /** `card`: two lines (where, then what) for Active, Finished and Pinned; otherwise one line. */
   const row = (s: Session, card = false, reorderable = false, showProject = false): string => {
     const p = state.projects.find(p => p.id === s.projectId);
@@ -2266,6 +2338,8 @@ function renderNavigation(): void {
     const { status, statusLabel, word } = taskSignal(s, now);
     const unread = seen.has(s.id) && s.id !== state.sessionId;
     const checkout = s.worktreePath ? s.worktreePath.split(/[\\/]/).filter(Boolean).pop() ?? p?.name ?? 'Project' : p?.name ?? 'Project';
+    const tree = leadTreeOf(s), open = Boolean(tree) && (filtering || !collapsedLeads.has(s.id));
+    const crown = tree ? crownHtml(tree) : '', progress = tree ? progressHtml(tree) : '';
     const link = s.pullRequest ?? s.issue;
     const linkMark = link ? `<span class="task-link ${link.kind === 'pull' ? 'pull' : 'issue'}" title="${escape(`${link.kind === 'pull' ? 'Pull request' : 'Issue'} #${link.number}: ${link.title}`)}">#${link.number}</span>` : '';
     // Worktree tasks show their branch; the worktree mark keeps its accessible name either way.
@@ -2276,7 +2350,7 @@ function renderNavigation(): void {
     const signals = `${status ? `<span class="task-indicator ${status}" role="img" aria-label="${statusLabel}" title="${statusLabel}"></span>` : unread ? '<span class="task-indicator unread" role="img" aria-label="Unread" title="Unread"></span>' : '<span class="task-indicator" aria-hidden="true"></span>'}${word ? `<span class="task-status ${status}" aria-hidden="true">${word}</span>` : ''}${age && !word ? `<span class="task-age${elapsed ? ' task-runtime' : ''}"${elapsed ? ` data-started-at="${startedAt}"` : ''} title="${elapsed ? `Working for ${elapsed}` : `Last message: ${escape(new Date(activityAt!).toLocaleString())}`}">${age}</span>` : ''}${wakeGlyph(s.id)}`;
     const stage = taskStage(s), done = stage === 'completed';
     const selected = s.id === state.sessionId;
-    const button = `<button class="task-item${card ? '' : ' task-oneline'}${selected ? ' selected' : ''}${unread ? ' unread' : ''}" data-action="select-task" data-id="${escape(s.id)}" data-activity="${activeTask(s, now) ? 'active' : 'inactive'}" draggable="true" data-reorderable="${reorderable}" data-pinned="${Boolean(s.pinned)}" tabindex="-1" ${reorderable ? 'aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"' : ''} ${selected ? 'aria-current="page"' : ''} aria-description="${shortProvider(s.provider)}" title="${escape([s.title, showProject || card ? chatTask(s) ? 'Chat' : p?.name ?? '' : '', s.worktreeBranch ?? ''].filter(Boolean).join('\n'))}">`;
+    const button = `<button class="task-item${card ? '' : ' task-oneline'}${tree ? ' has-tree' : ''}${selected ? ' selected' : ''}${unread ? ' unread' : ''}" data-action="select-task" data-id="${escape(s.id)}" data-activity="${activeTask(s, now) ? 'active' : 'inactive'}"${tree ? ` aria-expanded="${open}"` : ''} draggable="true" data-reorderable="${reorderable}" data-pinned="${Boolean(s.pinned)}" tabindex="-1" ${reorderable ? 'aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"' : ''} ${selected ? 'aria-current="page"' : ''} aria-description="${shortProvider(s.provider)}" ${tree ? `data-tip="${escape(leadTipFor(s.title, tree, { model: fallbackModel(s.provider, s.model).name, effort: s.reasoningEffort, context: s.contextUsage }))}"` : `title="${escape([s.title, showProject || card ? chatTask(s) ? 'Chat' : p?.name ?? '' : '', s.worktreeBranch ?? ''].filter(Boolean).join('\n'))}"`}>`;
     const pin = s.pinned ? `<span class="task-pin" role="img" aria-label="Pinned">${icon('pin')}</span>` : '';
     const projectLabel = `<span class="task-project">${escape(p?.name ?? 'Project')}</span>`;
     // Row actions sit beside the row's button (buttons cannot nest), over its right edge. They
@@ -2285,14 +2359,14 @@ function renderNavigation(): void {
     const tick = busy ? '' : `<button class="task-action task-check${done ? ' checked' : ''}" data-action="${done ? 'sidebar-reopen' : 'sidebar-complete'}" data-task="${id}" tabindex="-1" aria-label="${done ? 'Reopen' : 'Settle'}: ${title}" title="${done ? 'Reopen task' : 'Settle task'}">${icon('check')}</button>`;
     // Delete and the rest sit in the row's menu.
     const extra = `<button class="task-action task-more" data-action="sidebar-more" data-task="${id}" tabindex="-1" aria-haspopup="menu" aria-label="Task actions: ${title}" title="Task actions">${icon('more')}</button>`;
-    const wrap = (content: string) => `<div class="task-row${card ? '' : ' task-row-oneline'}" id="task-row-${id}" data-stage="${stage}">${content}<span class="task-actions">${tick}${extra}</span></div>`;
+    const wrap = (content: string) => `<div class="task-row${card ? '' : ' task-row-oneline'}" id="task-row-${id}" data-stage="${stage}">${content}<span class="task-actions">${tick}${extra}</span>${tree ? leadToggleHtml(s.id, s.title, open) : ''}</div>${tree && open ? treeHtml(s.id, s.title, tree, now, formatDuration) : ''}`;
     // One line: the title, then the worktree mark, linked PR or issue, status, age and harness.
     // A flat list names each row's project: its icon first, its name after the title.
-    if (!card && showProject) return wrap(`${button}<span class="task-line task-top">${projectAppIcon(s.projectId, p?.name ?? '')}<span class="task-title">${title}</span><span class="task-project-name" aria-hidden="true">${escape(chatTask(s) ? 'Chat' : p?.name ?? 'Project')}</span>${worktreeMark}${linkMark}${pin}${projectLabel}${signals}${providerLogo(s.provider, 'task-provider')}</span></button>`);
-    if (!card) return wrap(`${button}<span class="task-line task-top"><span class="task-title">${title}</span>${worktreeMark}${linkMark}${pin}${projectLabel}${signals}${providerLogo(s.provider, 'task-provider')}</span></button>`);
+    if (!card && showProject) return wrap(`${button}<span class="task-line task-top">${projectAppIcon(s.projectId, p?.name ?? '')}${crown}<span class="task-title">${title}</span>${progress}<span class="task-project-name" aria-hidden="true">${escape(chatTask(s) ? 'Chat' : p?.name ?? 'Project')}</span>${worktreeMark}${linkMark}${pin}${projectLabel}${signals}${providerLogo(s.provider, 'task-provider')}</span></button>`);
+    if (!card) return wrap(`${button}<span class="task-line task-top">${crown}<span class="task-title">${title}</span>${progress}${worktreeMark}${linkMark}${pin}${projectLabel}${signals}${providerLogo(s.provider, 'task-provider')}</span></button>`);
     // Two lines: where (app icon, checkout, status, age), then what (title, branch, PR, harness).
-    return wrap(`${button}<span class="task-line task-head">${projectAppIcon(s.projectId, p?.name ?? '')}<span class="task-checkout">${escape(checkout)}</span>${pin}${signals}</span>`
-      + `<span class="task-line task-top"><span class="task-title">${title}</span>${branch}${linkMark}${projectLabel}${providerLogo(s.provider, 'task-provider')}</span></button>`);
+    return wrap(`${button}<span class="task-line task-head">${projectAppIcon(s.projectId, p?.name ?? '')}<span class="task-checkout">${escape(checkout)}</span>${progress}${pin}${signals}</span>`
+      + `<span class="task-line task-top">${crown}<span class="task-title">${title}</span>${branch}${linkMark}${projectLabel}${providerLogo(s.provider, 'task-provider')}</span></button>`);
   };
   const single = Boolean(state.projectFilter);
   const heading = (key: string, label: string, count: number) => `<div class="group-heading section-heading">${label}<span class="section-count">${count}</span></div>`;
@@ -2353,7 +2427,7 @@ function renderNavigation(): void {
   const menuTrigger = choiceMenuAnchor ?? pendingMenuOpen?.anchor;
   const retainedRow = menuTrigger && nav.contains(menuTrigger) && menuTrigger.matches('.task-item') ? menuTrigger : null;
   const focused = nav.contains(document.activeElement) ? document.activeElement as HTMLElement : null;
-  const focusSelector = focused?.dataset.id ? `[data-id="${CSS.escape(focused.dataset.id)}"]` : focused?.dataset.action ? `[data-action="${CSS.escape(focused.dataset.action)}"]${focused.dataset.project ? `[data-project="${CSS.escape(focused.dataset.project)}"]` : ''}${focused.dataset.section ? `[data-section="${CSS.escape(focused.dataset.section)}"]` : ''}${focused.dataset.task ? `[data-task="${CSS.escape(focused.dataset.task)}"]` : ''}` : '';
+  const focusSelector = focused?.dataset.id ? `[data-id="${CSS.escape(focused.dataset.id)}"]` : focused?.dataset.action ? `[data-action="${CSS.escape(focused.dataset.action)}"]${focused.dataset.project ? `[data-project="${CSS.escape(focused.dataset.project)}"]` : ''}${focused.dataset.section ? `[data-section="${CSS.escape(focused.dataset.section)}"]` : ''}${focused.dataset.task ? `[data-task="${CSS.escape(focused.dataset.task)}"]` : ''}${focused.dataset.child ? `[data-child="${CSS.escape(focused.dataset.child)}"]` : ''}` : '';
   const pinnedGroup = pinned.length ? `<section class="task-group pinned-group" data-thread-group="pinned" aria-label="Pinned tasks">${heading('pinned', 'Pinned', pinned.length)}<div class="task-list">${pinned.map(s => row(s, !single, true)).join('')}</div></section>` : '';
   const empty = filtering ? '<div class="no-tasks sidebar-no-match">No tasks match</div>' : '';
   // Morph rather than replace: unchanged rows keep their nodes, so nothing flickers.
@@ -6621,7 +6695,8 @@ function onAgent(event: AgentEvent): void {
   if (event.kind === 'turn_changes') { if (event.sessionId === state.sessionId) void projectRunner.refresh(); completeTurnChanges(event); return; }
   if (event.kind === 'turn_start') return;
   if (event.kind === 'commands_changed') { if (event.sessionId === state.sessionId) slashPicker?.refresh(true); return; }
-  if (event.kind === 'subagent') { subagents.receive(event.sessionId, event.data); return; }
+  if (event.kind === 'subagent') { subagents.receive(event.sessionId, event.data); noteLeadAgent(event.sessionId, event.data); return; }
+  if (event.kind === 'usage' && workerSessionIds.has(event.sessionId)) { const use = parseContextUsage(event.data); if (use) workerContexts.set(event.sessionId, use); }
   // Hosts send `team` (a changed worker row) only for mirrors; it is not a local event kind.
   const workerRow = (event.kind as string) === 'team';
   if ((workerRow || event.kind === 'done' && teams.get(event.sessionId)) && state.sessions.find(task => task.id === event.sessionId)?.remoteDevice) refreshMirrorTeam(event.sessionId);
@@ -9219,6 +9294,20 @@ async function action(name: string, element: HTMLElement): Promise<void> {
     }
     case 'open-turn-diff': await showTurnDiff(element); break;
     case 'select-task': await selectSession(element.dataset.id!); break;
+    case 'toggle-lead': {
+      const id = element.dataset.task!;
+      if (!collapsedLeads.delete(id)) collapsedLeads.add(id);
+      try { localStorage.setItem(COLLAPSED_LEADS_KEY, JSON.stringify([...collapsedLeads])); } catch { /* per-launch preference only */ }
+      renderNavigation(); break;
+    }
+    case 'open-lead-child': {
+      const taskId = element.dataset.task!, childId = element.dataset.child!;
+      await selectSession(taskId);
+      if (taskId !== state.sessionId) break;
+      if (element.dataset.kind === 'worker') { const view = await ensureArchitectView(); if (taskId === state.sessionId) await view.openWorker(childId); }
+      else await subagents.showAgent(childId);
+      break;
+    }
     case 'sidebar-complete': sidebarTaskAction('complete', element.dataset.task!); break;
     case 'sidebar-reopen': sidebarTaskAction('reopen', element.dataset.task!); break;
     case 'sidebar-delete': sidebarTaskAction('delete', element.dataset.task!); break;

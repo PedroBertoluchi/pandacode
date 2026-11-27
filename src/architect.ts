@@ -137,7 +137,7 @@ export function mountArchitectSetup(host: HTMLElement, options: SetupOptions): S
   const workerProvider = providers.find(p => p.id === 'kimi' && p.installed) ?? providers.find(p => p.installed) ?? providers[0];
   // Automatic and named agent teams have no fixed profiles to edit here; start from a fresh setup.
   const source = team?.pendingSetup?.config ?? team?.config ?? library.lastSetup?.config;
-  const config: TeamConfig = structuredClone(source && !source.auto ? source : { workers: [{ id: 'worker-1', name: 'Worker 1', provider: workerProvider?.id ?? task.provider, model: '', reasoningEffort: null }], maxParallel: 0, maxRounds: 8, maxAssignments: 24, workspace: 'shared', summaryLimit: 3072 });
+  const config: TeamConfig = structuredClone(source && !source.auto ? source : { workers: [{ id: 'worker-1', name: 'Worker 1', provider: workerProvider?.id ?? task.provider, model: '', reasoningEffort: null }], maxParallel: library.defaultParallel ?? 2, maxRounds: 8, maxAssignments: 24, workspace: 'shared', summaryLimit: 3072 });
   // Council belongs to the task (`architect_set_council`): a saved setup must not start new tasks with it on.
   delete config.council;
   const architect: ModelSelection = team?.pendingSetup ? structuredClone(team.pendingSetup.architect) : !team && library.lastSetup && !task.resumeId ? structuredClone(library.lastSetup.architect) : { provider: task.provider, model: task.model, reasoningEffort: task.reasoningEffort ?? null };

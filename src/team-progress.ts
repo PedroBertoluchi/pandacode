@@ -48,6 +48,8 @@ export function updateTeamProgress(host: HTMLElement, team: TeamSnapshot | null 
     // The source's Lineage head: a muted label, a running count and a … that opens the team panel.
     list.innerHTML = `<div class="team-progress-head"><button type="button" class="team-progress-toggle" aria-expanded="false">${icon('chevron')}<span class="team-progress-label">Workers</span><span class="team-progress-count"></span></button><button type="button" class="icon-button team-progress-menu" data-action="open-team-progress" aria-label="Open team" title="Open team">${icon('more')}</button></div><button type="button" class="team-progress-more" data-action="open-team-progress" hidden></button>`;
     host.prepend(list);
+    // A team with workers at work shows them from the start; a settled one stays folded.
+    if (teamActive(team) && spawned.some(worker => !worker.abandoned && ['running', 'waiting', 'parked'].includes(worker.status))) list.setAttribute('data-open', '');
     const toggle = list.querySelector<HTMLButtonElement>('.team-progress-toggle')!, own = list;
     toggle.addEventListener('click', () => {
       const open = !own.hasAttribute('data-open');
@@ -55,7 +57,7 @@ export function updateTeamProgress(host: HTMLElement, team: TeamSnapshot | null 
       setOpen(own, open);
     });
   }
-  // Collapsed by default.
+  // Collapsed by default unless workers are at work when the list first appears.
   const keys = spawned.map(worker => `${team.sessionId}:${worker.id}`), open = list.hasAttribute('data-open') || keys.some(key => openWorkers.has(key));
   if (open) keys.forEach(key => openWorkers.add(key));
   listKeys.set(list, keys);

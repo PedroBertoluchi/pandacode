@@ -125,7 +125,7 @@ pub(crate) fn build_catalog(harnesses: &[Harness]) -> (Vec<WorkerProfile>, Vec<W
 }
 
 /// An automatic team over `harnesses`, keeping the limits of the last team setup (as the desktop does).
-pub(crate) fn auto_config(harnesses: &[Harness], last: Option<&TeamConfig>) -> TeamConfig {
+pub(crate) fn auto_config(harnesses: &[Harness], last: Option<&TeamConfig>, default_parallel: usize) -> TeamConfig {
     let (workers, catalog) = build_catalog(harnesses);
     TeamConfig {
         auto: true,
@@ -133,7 +133,7 @@ pub(crate) fn auto_config(harnesses: &[Harness], last: Option<&TeamConfig>) -> T
         name: None,
         workers,
         catalog,
-        max_parallel: last.map_or(0, |c| c.max_parallel),
+        max_parallel: last.map_or(default_parallel, |c| c.max_parallel),
         max_rounds: last.map_or(8, |c| c.max_rounds),
         max_assignments: last.map_or(24, |c| c.max_assignments),
         workspace: "shared".into(),
@@ -245,7 +245,7 @@ async fn team_setup(app: &tauri::AppHandle, profile_id: Option<&str>) -> Result<
         return Ok((profile.setup.config, Some(profile.setup.architect)));
     }
     let harnesses = installed_harnesses(true).await;
-    Ok((auto_config(&harnesses, library.last_setup.as_ref().map(|s| &s.config)), None))
+    Ok((auto_config(&harnesses, library.last_setup.as_ref().map(|s| &s.config), library.default_parallel), None))
 }
 
 /// A bot's workspace is the bot's own, never a remote task's (as `remote::start` refuses it).
@@ -497,8 +497,9 @@ mod tests {
         assert_eq!(catalog.len(), 3 + TEAM_LIMIT);
         assert_eq!(roster.len(), 3 + ROSTER_PER_HARNESS);
         assert_eq!(catalog[1].name, "m0 name · CODEX");
-        let config = auto_config(&harnesses, None);
-        assert!(config.auto && config.workspace == "shared" && config.max_parallel == 0);
+        let config = auto_config(&harnesses, None, profiles::DEFAULT_PARALLEL);
+        assert!(config.auto && config.workspace == "shared" && config.max_parallel == 2);
+        assert_eq!(auto_config(&harnesses, Some(&config), 5).max_parallel, 2, "a last setup keeps its own limit");
         assert_eq!(config.workers, roster);
     }
 

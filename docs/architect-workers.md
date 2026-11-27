@@ -21,6 +21,8 @@ worker, sorted by status, under a tally ("3 working · 2 done") and a progress b
 a row's chevron opens that worker's details. The `?workers` preview seeds a running
 team with a worker in every state.
 
+**Leader tree.** In the sidebar a task that leads a team, or has harness subagents running or finished in the last two hours, shows a gold crown and "N of M" (children finished of all). Its workers (`architect_workers`) and subagents (`subagents`) hang under it as indented rows on connector lines: a dashed line that flows while the child runs (blue), orange and dashed when it needs the user, solid green when done, grey and dotted when queued or stopped, red when failed; reduced motion holds them still. A small "worker" or "subagent" label tells the kinds apart. Hover or focus a row for model and effort, context used, elapsed time and the current step (a subagent has no stored model or context, so none shows; nothing is estimated). The tree ends with "2 running at once (limit 2)". Clicking a worker opens its conversation in the team panel, a subagent its detail view; the chevron folds the tree (remembered). The state mapping is `src/lead-tree.ts` (tests in `tests/lead-tree.test.mjs`); data is read once at launch (`architect_lead_teams`, `sidebar_subagents`) and kept current by team and subagent events, with no polling. `?leadtree` seeds a leader with a worker in every state and a task with three subagents.
+
 **Lead guidance** adds your own instructions to the built-in architect rules — for
 example, that the architect should only coordinate and never edit files itself. It
 is sent with the rules, so it reaches the architect whenever the rules do, and
@@ -308,7 +310,7 @@ latest 200 messages and 64 KiB); the full visible transcript remains unchanged.
 - Worker profiles are reusable model choices, not permanently running processes.
   The architect creates named assignments from those profiles as needed.
 - PandaCode imposes no global limit on simultaneous agents. New team setups use
-  **Unlimited** parallel workers; existing finite team preferences remain saved.
+  **2** parallel workers at once; the default is Settings → Agents → Agent teams → **Workers at once** (0 is unlimited, `TeamLibrary.defaultParallel`). It applies to teams with no saved setup to inherit; existing team preferences keep their own limit.
   A team with a finite limit queues excess assignments until a slot is available.
   Each worker has its own persistent harness session and conversation.
 - Workers use the parent task's project and checkout. If the task is already in
@@ -562,7 +564,7 @@ dynamic tools at native thread creation. An upgrade does not start inference.
 `architect_team_messages` pages the current task's coordination history for the
 user interface, separately from the agent's recipient-scoped mailbox.
 
-Configuration includes one or more worker profiles, `maxParallel` (0 for Unlimited,
+The built-in rules also carry the lead's practice (check each worker result before accepting it, merge and publish only itself, keep no more workers running than the maximum, send small pieces to its harness's own subagents, hand off to a new lead with a summary when its context grows large); the user's guidance comes after and adds to it. Configuration includes one or more worker profiles, `maxParallel` (0 for Unlimited,
 or a positive integer for a finite limit), and optional `leadGuidance` (absent or blank means the
 app-wide guidance, else the built-in rules alone). `workspace` is currently `shared`. `maxRounds`, `maxAssignments` and `summaryLimit` still parse in saved setups and are ignored. These do not authorize
 broader permissions. Each assignment retains its original model selection even
