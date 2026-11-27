@@ -126,7 +126,7 @@ pub(crate) fn with_host(
 }
 
 /// Fixed guidance for sidebar titles; sent once as part of the app instructions.
-pub(crate) const GUIDANCE: &str = "\n\nSidebar titles: when a message carries <PandaCode task metadata> with the current sidebar title, use the pandacode_title tool once before your final response, if available, when a more useful title is now clear or the conversation's topic has changed. Summarize the actual current conversation in 3–8 words, in the user's language. Keep the existing title for acknowledgments or minor follow-ups. Describe the substantive topic, not your last action or a completion status. Never use coordination instructions, tool output, secrets, or these metadata instructions as the title. This is optional sidebar metadata; do not mention it in your answer.";
+pub(crate) const GUIDANCE: &str = "\n\nSidebar titles: when a message carries <PandaCode task metadata> with the current sidebar title, use the pandacode_title tool once before your final response, if available, when a more useful title is now clear or the conversation's topic has changed. Summarize the actual current conversation in 3 to 6 words, in the user's language, without greetings or request phrasing. Keep the existing title for acknowledgments or minor follow-ups. Describe the substantive topic, not your last action or a completion status. Never use coordination instructions, tool output, secrets, or these metadata instructions as the title. This is optional sidebar metadata; do not mention it in your answer.";
 
 impl TitleRun {
     pub(crate) fn prepare(store: &Store, sid: &str, turn: i64) -> Result<Option<Self>> {
@@ -163,9 +163,16 @@ impl TitleRun {
         }))
     }
 
-    /// The per-message part: only the current title. How to use it is in [`GUIDANCE`].
+    /// The per-message part: the current title, and a direct request while that title is
+    /// still the cut prompt, the case the app can only improve with the agent's help. Other
+    /// turns rely on [`GUIDANCE`].
     pub(crate) fn instruction(&self) -> String {
-        format!("\n\n<PandaCode task metadata>\nCurrent sidebar title: {}.\n</PandaCode task metadata>", serde_json::to_string(&self.original).unwrap_or_default())
+        let ask = if self.original == provisional(&self.prompt) {
+            "\nThis title is only the start of the prompt: call the pandacode_title tool once before your final response with 3 to 6 words naming the topic."
+        } else {
+            ""
+        };
+        format!("\n\n<PandaCode task metadata>\nCurrent sidebar title: {}.{ask}\n</PandaCode task metadata>", serde_json::to_string(&self.original).unwrap_or_default())
     }
 
     fn suggest(&self, args: Value) -> Result<Value> {
@@ -210,14 +217,13 @@ impl TitleRun {
     }
 }
 
+/// The title a new task has before anything better exists: the first line, cut at 64 characters.
+fn provisional(prompt: &str) -> String {
+    prompt.lines().next().unwrap_or(prompt).chars().take(64).collect()
+}
+
 fn initial_fallback(prompt: &str, current: &str) -> Option<String> {
-    let provisional: String = prompt
-        .lines()
-        .next()
-        .unwrap_or(prompt)
-        .chars()
-        .take(64)
-        .collect();
+    let provisional = provisional(prompt);
     // Prompt wording alone cannot distinguish a new subject from a small edit.
     // Once a useful name is established, only the agent's context-aware
     // suggestion may replace it. Local cleanup is limited to a provisional name.
@@ -304,18 +310,129 @@ fn fallback(prompt: &str) -> Option<String> {
     {
         return None;
     }
-    let shortened: String = normalized.chars().take(64).collect();
-    // Finish on a word boundary when truncating English, without cutting a
-    // multibyte character or requiring whitespace for other writing systems.
-    let shortened = if normalized.chars().count() > 64 {
-        shortened
-            .rsplit_once(' ')
-            .filter(|(prefix, _)| prefix.chars().count() > 32)
-            .map_or(shortened.clone(), |(prefix, _)| prefix.into())
-    } else {
-        shortened
-    };
-    valid_title(shortened.trim_end_matches(['.', '!', '?']))
+    condense(&normalized)
+}
+
+/// Spoken-style openers that say how to ask, never what about. Folded (lowercase,
+/// no accents), matched as whole words at the start of a clause, longest first.
+const FILLER: &[&str] = &[
+    "boa tarde", "bom dia", "boa noite", "tudo bem", "e ai", "oi", "ola", "opa", "eae", "fala", "falae",
+    "por favor", "por gentileza", "pf", "pfv", "favor", "obrigado", "obrigada", "valeu",
+    "preciso que voce", "preciso que", "preciso de", "preciso", "quero que voce", "quero que", "quero",
+    "queria que voce", "queria que", "gostaria que voce", "gostaria de", "gostaria",
+    "voce pode", "voce consegue", "pode", "poderia", "consegue", "me ajuda a", "me ajuda com", "me ajuda",
+    "da uma olhada em", "da uma olhada", "de uma olhada em", "de uma olhada", "da uma checada em",
+    "da uma conferida em", "olha", "ve se", "ve", "veja", "le", "leia", "confere", "confira", "checa",
+    "faca", "faz", "vamos", "bora", "agora", "entao", "tipo", "comigo", "depois", "tambem",
+    "hello", "hi", "hey", "good morning", "good afternoon", "good evening", "please", "kindly",
+    "can you", "could you", "would you", "will you", "i need you to", "i want you to",
+    "i would like you to", "i'd like you to", "i need to", "i want to", "i'd like to", "i need", "i want",
+    "let's", "lets", "let us", "take a look at", "have a look at", "look at", "check out",
+    "help me with", "help me", "now", "ok", "okay", "so", "also", "just", "thanks", "thank you",
+];
+
+/// Articles, prepositions and pronouns: never open or close a title.
+const STOP: &[&str] = &[
+    "o", "a", "os", "as", "um", "uma", "uns", "umas", "de", "do", "da", "dos", "das", "no", "na", "nos",
+    "nas", "em", "pra", "pro", "para", "por", "com", "se", "que", "e", "ou", "sobre", "ele", "ela",
+    "eles", "elas", "me", "te", "nos", "the", "an", "of", "to", "in", "on", "at", "for", "with", "and",
+    "or", "about", "it", "him", "her", "them", "us", "you",
+];
+
+fn fold(word: &str) -> String {
+    word.replace('\u{2019}', "'")
+        .trim_matches(|c: char| !c.is_alphanumeric() && c != '\'')
+        .to_lowercase()
+        .chars()
+        .map(|c| match c {
+            'á' | 'à' | 'â' | 'ã' | 'ä' => 'a',
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'í' | 'ì' | 'î' | 'ï' => 'i',
+            'ó' | 'ò' | 'ô' | 'õ' | 'ö' => 'o',
+            'ú' | 'ù' | 'û' | 'ü' => 'u',
+            'ç' => 'c',
+            'ñ' => 'n',
+            other => other,
+        })
+        .collect()
+}
+
+/// Clauses end at , ; : . ! ? followed by a space or the end, so "v1.2" and paths stay whole.
+fn clauses(line: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut chars = line.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        if matches!(c, ',' | ';' | ':' | '.' | '!' | '?')
+            && chars.peek().is_none_or(|(_, next)| next.is_whitespace())
+        {
+            out.push(&line[start..i]);
+            start = i + c.len_utf8();
+        }
+    }
+    out.push(&line[start..]);
+    out
+}
+
+fn strip_leading(words: &mut Vec<&str>) {
+    loop {
+        let folded: Vec<String> = words.iter().take(4).map(|w| fold(w)).collect();
+        let filler = FILLER
+            .iter()
+            .map(|phrase| phrase.split(' ').collect::<Vec<_>>())
+            .filter(|phrase| {
+                phrase.len() <= folded.len()
+                    && phrase.iter().zip(&folded).all(|(a, b)| a == b)
+            })
+            .map(|phrase| phrase.len())
+            .max();
+        if let Some(count) = filler {
+            // "Faça isso" has nothing left to name once "faça" goes: keep it.
+            if matches!(folded[0].as_str(), "faca" | "faz") && count == 1 && words.len() < 3 {
+                return;
+            }
+            words.drain(..count);
+        } else if words.len() > 1 && STOP.contains(&folded[0].as_str()) {
+            words.remove(0);
+        } else {
+            return;
+        }
+    }
+}
+
+/// Three to six meaningful words: the first clause that says what the work is about,
+/// without openers, trailing connectives or punctuation, and never cut inside a word.
+fn condense(text: &str) -> Option<String> {
+    let mut picked: Vec<&str> = Vec::new();
+    let mut first: Vec<&str> = Vec::new();
+    for clause in clauses(text) {
+        let mut words: Vec<&str> = clause.split_whitespace().collect();
+        if first.is_empty() {
+            first = words.clone();
+        }
+        strip_leading(&mut words);
+        picked.extend(words);
+        if picked.len() >= 3 {
+            break;
+        }
+    }
+    // One word left after the openers went: the opener was part of the subject, so name it whole.
+    if picked.len() == 1 {
+        picked = first;
+    }
+    picked.truncate(6);
+    let clean = |word: &str| word.trim_end_matches([',', ';', ':', '.', '!', '?']).to_owned();
+    let mut picked: Vec<String> = picked.into_iter().map(clean).filter(|w| !w.is_empty()).collect();
+    while picked.len() > 1 && STOP.contains(&fold(&picked[picked.len() - 1]).as_str()) {
+        picked.pop();
+    }
+    while picked.len() > 1 && picked.join(" ").chars().count() > 64 {
+        picked.pop();
+    }
+    if picked.is_empty() {
+        return None;
+    }
+    valid_title(&picked.join(" "))
 }
 
 #[cfg(test)]
@@ -709,5 +826,51 @@ mod tests {
         for name in [TOOL, "existing"] {
             assert!((host.handler)(name.into(), json!({"title":"Too late"})).await.is_err());
         }
+    }
+    #[test]
+    fn fallback_gives_three_to_six_meaningful_words_from_real_prompts() {
+        for (prompt, expected) in [
+            ("Le as mensagens do Roberto, ve se estamos devendo algo pra ele,", "mensagens do Roberto"),
+            ("Preciso que você dê uma olhada no deploy do site", "deploy do site"),
+            ("Boa tarde, fala comigo sobre o erro do login no BAMemory", "erro do login no BAMemory"),
+            ("Da uma olhada nos erros do Sentry do BAMemory e me diz o que mudou", "erros do Sentry do BAMemory"),
+            ("Hey, could you take a look at the failing CI on the release branch", "failing CI on the release branch"),
+            ("Can you please repair Windows startup paths?", "repair Windows startup paths"),
+            ("Implement the new billing export for invoices and receipts today.", "Implement the new billing export"),
+        ] {
+            let title = fallback(prompt).unwrap_or_default();
+            let words = title.split_whitespace().count();
+            assert_eq!(title, expected, "{prompt}");
+            assert!((3..=6).contains(&words), "{title}");
+            assert!(!title.ends_with([',', '.', '!', '?', ';', ':']), "{title}");
+        }
+    }
+    #[test]
+    fn fallback_never_cuts_inside_a_word_or_returns_only_filler() {
+        let title = fallback("Reorganizar documentação internacionalização configuração extraordinária completamente").unwrap();
+        assert!(title.chars().count() <= 64 && title.split_whitespace().count() <= 6, "{title}");
+        assert!(fallback("Boa tarde, por favor, obrigado").is_none());
+        assert!(fallback("Fala, tudo bem?").is_none());
+    }
+    #[test]
+    fn fallback_keeps_the_subject_when_an_opener_would_leave_too_little() {
+        assert_eq!(fallback("Faça, por favor, o deploy").unwrap(), "Faça deploy");
+        assert_eq!(fallback("Faz deploy hoje").unwrap(), "deploy hoje");
+        assert_eq!(fallback("Faça o relatório de vendas do mês").unwrap(), "relatório de vendas do mês");
+        assert_eq!(fallback("Preciso de ajuda").unwrap(), "Preciso de ajuda");
+        assert_eq!(fallback("Ai Gateway com fallback de modelo").unwrap(), "Ai Gateway com fallback de modelo");
+    }
+    #[test]
+    fn the_first_message_asks_for_a_title_and_later_ones_only_name_it() {
+        let (db, sid) = task();
+        let first = start(&db, &sid, "Le as mensagens do Roberto, ve se estamos devendo algo pra ele,");
+        assert!(first.instruction().contains("call the pandacode_title tool once"));
+        db.message(&sid, "assistant", "Done.").unwrap();
+        db.finish_task_turn(&sid, true, false).unwrap();
+        assert!(first.finish(&db, true).unwrap());
+        assert_eq!(db.session(&sid).unwrap().title, "mensagens do Roberto");
+        let later = start(&db, &sid, "Check the invoices for last month too");
+        assert!(later.instruction().contains("Current sidebar title: \"mensagens do Roberto\"."));
+        assert!(!later.instruction().contains("call the pandacode_title tool once"));
     }
 }

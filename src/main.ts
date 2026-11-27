@@ -43,6 +43,7 @@ import { setDocumentView } from './document-viewer';
 import { onQueueReorder, queuePanel, type HoldReason, type QueuedMessage } from './message-queue';
 import { initWakeups, openWakeComposer, scheduledMark, schedulesVersion, wakeCommand, wakeGlyph, wakeStrip } from './schedules-thread';
 import { TRACE_HEADER } from './schedules-api';
+import { enabled as projectHintEnabled, findProject, projectHintHtml, setEnabled as projectHintSetEnabled, type HintFolder, type ProjectHint } from './project-hint';
 import { afterRun as turnChecksAfterRun, enabled as turnChecksEnabled, noteManualSend, setEnabled as turnChecksSetEnabled } from './turn-checks';
 import { limitActive, limitBanner, resetLabel } from './usage-limit';
 import { cascade, enterView, glideIn, glideOut, hidePanel, hideToast, holdDim, installDialogMotion, materializeIn, materializeOut, publishSpringEasings, releaseHold, syncPulses, revealIn, settleIn, showPanel, showToast } from './motion';
@@ -4454,7 +4455,7 @@ function renderComposer(): void {
   // Approvals sit above everything that rides on the prompt, the context bar included.
   $('#composer-area').insertAdjacentHTML('afterbegin', '<div id="bot-failover-bar"></div>');
   $('#composer-area').insertAdjacentHTML('afterbegin', '<div id="approval-bar"></div>');
-  $('#composer').insertAdjacentHTML('beforebegin', '<div id="machine-orchestration"></div>' + cloudStrip(s) + remoteStartStrip(s.id) + remoteMissingNote(s) + (composerNotes.has(s.id) ? `<div class="composer-inline-note">${escape(composerNotes.get(s.id))}</div>` : '') + (running && !teamHeld(s.id) ? '' : limitBanner(s, Date.now(), limitAlternatives(s), teamHeld(s.id))));
+  $('#composer').insertAdjacentHTML('beforebegin', '<div id="machine-orchestration"></div>' + cloudStrip(s) + remoteStartStrip(s.id) + remoteMissingNote(s) + (composerNotes.has(s.id) ? `<div class="composer-inline-note">${escape(composerNotes.get(s.id))}</div>` : '') + projectHintHtml(projectHints.get(s.id)?.hint) + (running && !teamHeld(s.id) ? '' : limitBanner(s, Date.now(), limitAlternatives(s), teamHeld(s.id))));
   if (orchestrationSlot) $('#machine-orchestration').replaceWith(orchestrationSlot);
   $('#composer-area').prepend(featureRequests.element); featureRequests.sync();
   renderApprovalBar(); renderBotFailover(); syncOrchestration(); promptMetricsCache = undefined; resizePrompt();
@@ -6059,6 +6060,60 @@ function showComposerNote(s: Session, text: string): void {
   if (s.id !== state.sessionId) return;
   syncComposerNote(s); announce(text);
 }
+/** "Open there" (project-hint.ts): the first message of a New task that names another project is held, with this chip above the composer. */
+const projectHints = new Map<string, { text: string; hint: ProjectHint }>();
+/** Tasks whose chip was answered: it never comes back for them. */
+const projectHintDecided = new Set<string>();
+/** Tasks whose folder lookup is running: a second send meanwhile is swallowed, not sent twice. */
+const projectHintLooking = new Set<string>();
+function syncProjectHint(s: Session): void {
+  if (s.id !== state.sessionId) return;
+  const old = document.querySelector<HTMLElement>('#project-hint'), markup = projectHintHtml(projectHints.get(s.id)?.hint);
+  if (old) { if (markup) old.outerHTML = markup; else old.remove(); }
+  else if (markup) document.querySelector('#composer')?.insertAdjacentHTML('beforebegin', markup);
+}
+function clearProjectHint(s: Session): void { if (projectHints.delete(s.id)) syncProjectHint(s); }
+/** True when the send is held to ask. A second send of the same text, or any failure to look, sends where the task is. */
+async function holdForProjectHint(s: Session, text: string, generation: number): Promise<boolean> {
+  const shown = projectHints.get(s.id);
+  if (shown) { clearProjectHint(s); if (shown.text === text) { projectHintDecided.add(s.id); return false; } }
+  const current = state.projects.find(p => p.id === s.projectId);
+  if (!current || !text || text.startsWith('/') || !projectHintEnabled() || projectHintDecided.has(s.id) || !newTaskView() || chatTask(s)
+    || s.remoteDevice || s.cloud || s.worktreePath || remoteChoice !== LOCAL || sidebarBots.some(item => item.desktopSession === s.id)) return false;
+  if (projectHintLooking.has(s.id)) return true;
+  projectHintLooking.add(s.id);
+  let found: { wide: boolean; folders: HintFolder[] };
+  try { found = await call<{ wide: boolean; folders: HintFolder[] }>('project_hint_folders', { projectId: current.id }); }
+  catch (error) { console.warn('Could not look for a better project:', error); return false; }
+  finally { projectHintLooking.delete(s.id); }
+  if (!found.wide) return false;
+  const hint = findProject(text, current, userProjects(), found.folders);
+  if (state.sessionId !== s.id || state.generation !== generation) return true;
+  if (!hint) return false;
+  projectHints.set(s.id, { text, hint }); syncProjectHint(s);
+  announce(`Looks like ${hint.name}. Open there, or keep here.`);
+  return true;
+}
+async function openProjectHint(): Promise<void> {
+  const s = session(), shown = s && projectHints.get(s.id);
+  if (!s || !shown) return;
+  const { hint } = shown;
+  try {
+    let id = hint.kind === 'registered' ? hint.projectId : '';
+    if (!id) {
+      id = (await call<Project>('add_project', { path: hint.path })).id;
+      state.projects = await call<Project[]>('list_projects');
+    }
+    projectHintDecided.add(s.id); clearProjectHint(s);
+    await changeTaskProject(id, true);
+  } catch (error) { report(error); return; }
+  await send();
+}
+async function keepProjectHint(): Promise<void> {
+  const s = session(); if (!s) return;
+  projectHintDecided.add(s.id); clearProjectHint(s);
+  await send();
+}
 function clearComposerNote(s: Session): void { if (composerNotes.delete(s.id) && s.id === state.sessionId) syncComposerNote(s); }
 function syncComposerNote(s: Session): void {
   const composer = document.querySelector('#composer'), old = document.querySelector<HTMLElement>('#composer-area .composer-inline-note:not(.remote-missing-note)');
@@ -6156,6 +6211,7 @@ async function sendDraft(): Promise<void> {
   if (councilFirstSends.has(s.id)) return;
   if ((!text && !hasBotAttachments) || s.archived || taskStage(s) === 'completed' || isRunning() || finishingStreams.has(s.id) || threadLoading() || state.messagesError || taskBusyConfiguring(s.id)) return;
   clearComposerNote(s);
+  if (await holdForProjectHint(s, text, generation)) return;
   if (remoteOffline(s)) { renderComposer(); return; }
   const fresh = !s.remoteDevice && newTaskView();
   const target = fresh ? remoteTargets.find(item => item.deviceId === remoteChoice) : undefined;
@@ -7445,7 +7501,7 @@ function showOpenProject(forTask = false): void {
   modal('Open project', `<form id="open-project-form"><label class="field-label" for="project-folder">Project folder</label><input id="project-folder" name="path" placeholder="/Users/you/Projects/my-app" autocomplete="off" spellcheck="false" required><p class="field-help">Enter a full path or choose Browse.</p><div class="dialog-footer"><button type="button" class="secondary-button" data-action="browse-project">${icon('folder')}Browse…</button><button type="button" class="secondary-button" data-action="close-dialog">Cancel</button><button class="primary-button">Open project</button></div></form>`);
   if (forTask && newTaskView()) openingProjectForTask = { id: state.sessionId, generation: state.generation };
 }
-async function changeTaskProject(projectId: string): Promise<void> {
+async function changeTaskProject(projectId: string, keepAttachments = false): Promise<void> {
   let selected = session();
   if (!selected || !newTaskView() || taskBusyConfiguring(selected.id)) throw new Error('A project can only be changed before starting the task.');
   const generation = state.generation;
@@ -7464,8 +7520,8 @@ async function changeTaskProject(projectId: string): Promise<void> {
     // Reload its new project before permitting any file or composer action.
     if (generation !== state.generation) { await selectSession(selected.id, true); return; }
     const currentGeneration = ++state.generation;
-    const hadAttachments = state.attachments.length > 0;
-    state.attachments = [];
+    const hadAttachments = !keepAttachments && state.attachments.length > 0;
+    if (!keepAttachments) state.attachments = [];
     activateProject(updated.projectId);
     if (state.projectFilter && state.projectFilter !== updated.projectId) setProjectFilter(updated.projectId);
     render();
@@ -8205,6 +8261,7 @@ async function showSettings(section?: import('./settings').SettingsSection, inte
       theme: currentTheme(), preview, section, discover: discoverSettingsProviders, versionPending: providerVersionPending, listPending: providerListPending,
       projects: { list: userProjects, remove: removeProject },
       turnChecks: turnChecksEnabled(),
+      projectHint: projectHintEnabled(),
       github: target => github.mountSettings(target, project()?.id ?? state.projects[0]?.id ?? ''),
       teams: { loadModels, call },
       cloud: { call, listen: (name, callback) => (subscribe as (name: string, callback: (event: any) => void) => Promise<() => void>)(name, callback) },
@@ -9382,6 +9439,8 @@ async function action(name: string, element: HTMLElement): Promise<void> {
     case 'board-import': github.showImport(state.projectFilter || project()?.id || state.projects[0]?.id || ''); break;
     case 'model': await showModel(element, actionTask(element)); break;
     case 'change-task-project': await showProjectPicker(element); break;
+    case 'project-hint-open': await openProjectHint(); break;
+    case 'project-hint-keep': await keepProjectHint(); break;
     case 'mode': await showMode(element, actionTask(element)); break;
     case 'filter-projects': await showProjectFilter(element); break;
     case 'default-provider': await showDefaultProvider(element); break;
@@ -9552,6 +9611,7 @@ document.addEventListener('change', event => {
   const input = event.target as HTMLInputElement;
   if (input.id === 'daily-wallpapers') { wallpapers.setEnabled(input.checked); document.querySelector('.settings-wallpapers')?.toggleAttribute('hidden', !input.checked); }
   if (input.id === 'turn-checks') turnChecksSetEnabled(input.checked);
+  if (input.id === 'project-hint') projectHintSetEnabled(input.checked);
   // A switch toggles natively (the data-action click path cancels the default), then saves.
   if (input.classList.contains('limit-resume-switch')) run(limitAction('limit-resume-at-reset', input));
   if (input.id === 'compact-mode') { document.body.classList.toggle('compact', input.checked); localStorage.setItem('pandacode.compact', String(input.checked)); }

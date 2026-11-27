@@ -59,7 +59,7 @@ stay in that harness; OpenCode's model list is chosen once, in Settings → Agen
 PandaCode needs no provider or model of its own:
 
 - **Thread titles** come from the agent already running the task, through the
-  `pandacode_title` tool, or from the first line of your prompt
+  `pandacode_title` tool, or from the first words of your prompt
   (`session_titles.rs`). No extra model session is started.
 - **Project checks after turns** run the checkout's own `npm test` or
   `cargo check` (`checks.rs`); no model is called.
