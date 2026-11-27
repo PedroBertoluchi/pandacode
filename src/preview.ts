@@ -50,6 +50,15 @@ const slowTurn = typeof location !== 'undefined' && new URLSearchParams(location
 const shortReply = typeof location !== 'undefined' && new URLSearchParams(location.search).has('shortreply');
 const showCards = typeof location !== 'undefined' && new URLSearchParams(location.search).has('cards');
 if (showCards) sessions = [{ id: 'session-cards', projectId: 'project-1', title: 'Turn cards', provider: 'claude', model: 'sonnet', mode: 'ask', status: 'idle', createdAt: now - 30000, updatedAt: now + 4000, archived: false, worktreePath: null, resumeId: null, lastResponseAt: now - 1000 }, ...sessions];
+// ?context=<percent>&cache=<seconds since the last response>: the first task's context reading and cache age, for the composer's Context control.
+{
+  const query = typeof location !== 'undefined' ? new URLSearchParams(location.search) : null;
+  const percent = Number(query?.get('context')), age = Number(query?.get('cache') ?? 0);
+  if (query?.has('context') && Number.isFinite(percent) && sessions[0]) {
+    sessions[0].contextUsage = { usedTokens: Math.round(percent * 2000), contextWindow: 200000 };
+    sessions[0].lastResponseAt = Date.now() - (Number.isFinite(age) ? age : 0) * 1000;
+  }
+}
 // The preview persists sidebar preferences only, never sample conversation data.
 const THREAD_ORDER_KEY = 'pandacode.preview.threadOrder';
 type ThreadOrder = { id: string; pinned: boolean; sidebarOrder: number | null };
@@ -1926,6 +1935,7 @@ export async function invoke<T>(command: string, args: Record<string, any>): Pro
       if (!message) throw new Error('This saved message does not belong to the source task.');
       result = message.content; break;
     }
+    case 'handoff_to_new_chat':
     case 'fork_session_at_message': {
       const source = session(args.sessionId), history = messages[source.id] ?? [];
       const boundary = history.findIndex(message => message.id === args.messageId);
@@ -1948,7 +1958,9 @@ export async function invoke<T>(command: string, args: Record<string, any>): Pro
       });
       if (boundaryProvider !== source.provider) copied.push({ id: ++id, sessionId: created.id, role: 'handoff', content: JSON.stringify({ fromProvider: boundaryProvider, toProvider: source.provider, summary: 'Forked conversation. Earlier responses keep their original harness. The next message carries the saved conversation into the currently selected harness.' }), createdAt: Date.now() });
       created.taskDescription = copied.find(message => message.role === 'user')?.content ?? '';
-      sessions.unshift(created); messages[created.id] = copied; result = created; break;
+      sessions.unshift(created); messages[created.id] = copied; result = created;
+      if (command === 'handoff_to_new_chat') (messages[source.id] ??= []).push({ id: ++id, sessionId: source.id, role: 'handoff', content: JSON.stringify({ fromProvider: source.provider, toProvider: source.provider, summary: 'Handed off to a new chat. It starts with the recent messages of this conversation (up to 200 entries, 64 KiB), not a summary.' }), createdAt: Date.now() });
+      break;
     }
     case 'fork_codex_task': {
       const source = codexTask(args.sessionId); assertIdle(source);
@@ -2472,6 +2484,13 @@ export async function invoke<T>(command: string, args: Record<string, any>): Pro
       if (!pull) throw new Error(`Pull request #${number} was not found.`);
       s.pullRequest = { kind: 'pull', number, url: `${repo.url}/pull/${number}`, title: pull.title, state: 'open', checkedAt: Date.now() };
       result = s; break;
+    }
+    case 'task_context_stats': {
+      const all = messages[args.sessionId] ?? [];
+      const history = all.filter(message => message.createdAt >= session(args.sessionId).createdAt && !message.content.includes('Forked conversation.'));
+      const recent = all.filter(message => ['user', 'assistant'].includes(message.role)).at(-1);
+      result = { handoffs: history.filter(message => message.role === 'handoff').length, compactions: history.filter(message => message.role === 'tool' && message.content.includes('"name":"Compact context"')).length, lastMessageId: recent?.id ?? null };
+      break;
     }
     case 'task_token_usage': result = { input: 91234, cacheRead: 1000000, cacheWrite: 45000, output: 152340, firstUsed: Date.now() - 86400000, lastUsed: Date.now() - 300000 }; break;
     case 'token_saver_tools': result = { rtk: previewRtk, rtkVersion: previewRtk ? '1.0.1' : '', rtkInstall: 'brew install rtk' }; break;

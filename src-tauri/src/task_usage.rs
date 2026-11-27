@@ -3,6 +3,16 @@
 
 use tauri::Manager;
 
+/// Handoff and compaction counts for the composer's Context control.
+#[tauri::command]
+pub(crate) async fn task_context_stats(
+    state: tauri::State<'_, crate::AppState>,
+    session_id: String,
+) -> crate::Result<crate::storage::ContextStats> {
+    let store = state.store.clone();
+    crate::blocking(move || store.lock().map_err(|e| e.to_string())?.context_stats(&session_id)).await
+}
+
 #[tauri::command]
 pub(crate) async fn task_token_usage(
     state: tauri::State<'_, crate::AppState>,

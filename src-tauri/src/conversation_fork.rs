@@ -114,6 +114,32 @@ fn copy(store: &Store, source_id: &str, message_id: i64, exclusive: bool) -> Res
     Ok(target)
 }
 
+pub(crate) const LEAD_HANDS_OFF: &str = "A team lead hands off by itself.";
+pub(crate) const WAIT_FOR_TURN: &str = "Wait for the turn to finish.";
+const NEW_CHAT_NOTICE: &str = "Handed off to a new chat. It starts with the recent messages of this conversation (up to 200 entries, 64 KiB), not a summary.";
+
+/// The composer's "Hand off to new chat": a fork at the newest message whose first prompt carries the
+/// recent conversation (see `context_recovery`), plus a divider here so the Handoffs count includes it.
+/// A team lead is refused: a fork has no team behind it.
+pub(crate) fn hand_off(store: &Store, source_id: &str, message_id: i64) -> Result<Session> {
+    let lead: bool = store
+        .db
+        .query_row("SELECT EXISTS(SELECT 1 FROM architect_teams WHERE session_id=?1)", [source_id], |row| row.get(0))
+        .map_err(|e| e.to_string())?;
+    if lead {
+        return Err(LEAD_HANDS_OFF.into());
+    }
+    let source = store.session(source_id)?;
+    if matches!(source.status.as_str(), "running" | "waiting") {
+        return Err(WAIT_FOR_TURN.into());
+    }
+    let provider = source.provider;
+    let fork = at_message(store, source_id, message_id)?;
+    let notice = serde_json::json!({"fromProvider": provider, "toProvider": provider, "summary": NEW_CHAT_NOTICE});
+    store.message(source_id, "handoff", &notice.to_string())?;
+    Ok(fork)
+}
+
 fn snapshot_tool(content: &mut String) -> Option<String> {
     let mut value: serde_json::Value = serde_json::from_str(content).ok()?;
     if value["type"] != "tool_activity" || value["version"] != 1 {
