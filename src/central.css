@@ -1,0 +1,53 @@
+/* The Central board (docs/central.md): one card per project, drawn on the main pane's surface like the task board. */
+.workspace:not(.central-view) #central-board{display:none}
+#central-board{position:relative;isolation:isolate;flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:transparent}
+#central-board[hidden]{display:none}
+.central-scroll{flex:1;min-height:0;overflow:auto;padding:28px 24px 12px;scrollbar-gutter:stable}
+.central-head{margin-bottom:20px}
+.central-eyebrow{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:var(--type-caption);line-height:var(--type-caption-leading);font-weight:var(--weight-medium)}
+.central-eyebrow .icon{color:var(--crown)}
+.central-title{font-size:var(--type-title);line-height:var(--type-title-leading);font-weight:var(--type-title-weight);letter-spacing:var(--tracking-tight);margin:4px 0 0}
+.central-sub{margin:6px 0 0;color:var(--muted);font-size:var(--type-body);line-height:var(--type-body-leading)}
+.central-attention{margin-bottom:16px;padding:var(--ds-card-pad);border:1px solid var(--ds-border);border-radius:var(--ds-card-radius);background:var(--ds-card);box-shadow:var(--ds-shadow-card)}
+.central-card-title{margin:0;font-size:var(--type-subheading);line-height:var(--type-subheading-leading);font-weight:var(--type-subheading-weight)}
+.central-attention .central-card-title{margin-bottom:6px}
+.central-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr));gap:12px;align-items:start}
+.central-card{min-width:0;display:flex;flex-direction:column;gap:10px;padding:var(--ds-card-pad);border:1px solid var(--ds-border);border-radius:var(--ds-card-radius);background:var(--ds-card);box-shadow:var(--ds-shadow-card)}
+.central-card[data-needs=true]{border-color:color-mix(in srgb,var(--ds-warn) 45%,var(--ds-border))}
+.central-card header{min-width:0}
+.central-card .central-card-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.central-counts{display:flex;flex-wrap:wrap;gap:4px 12px;color:var(--muted);font-size:var(--type-caption);line-height:var(--type-caption-leading);font-variant-numeric:tabular-nums}
+.central-num{font-weight:var(--weight-medium);color:var(--text)}
+.central-count[data-zero=true]{opacity:.55}
+.central-count[data-kind=needs]:not([data-zero=true]) .central-num{color:var(--ds-warn)}
+.central-count[data-kind=failed]:not([data-zero=true]) .central-num{color:var(--ds-danger)}
+.central-leaders,.central-events{display:flex;flex-direction:column;gap:2px;min-width:0}
+.central-leader,.central-event{display:flex;align-items:center;gap:8px;min-width:0;width:100%;min-height:var(--ds-row-h,30px);padding:4px var(--ds-row-pad-x,8px);border:0;border-radius:var(--ds-inner-radius);background:transparent;color:var(--text);font:inherit;font-size:var(--type-body);line-height:var(--type-body-leading);text-align:left;cursor:pointer}
+.central-leader:hover,.central-event:hover{background:var(--ds-card-inner)}
+.central-leader:focus-visible,.central-event:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
+.central-crown{display:inline-flex;flex:none;color:var(--crown)}
+.central-crown .icon{--icon-size:var(--icon-sm);fill:color-mix(in srgb,var(--crown) 30%,transparent)}
+.central-leader-name,.central-event-text{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.central-project{font-weight:var(--weight-medium)}
+.central-progress{flex:none;color:var(--muted);font-size:var(--type-caption);line-height:var(--type-caption-leading);font-variant-numeric:tabular-nums}
+.central-dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--muted)}
+.central-event[data-kind=running] .central-dot{background:var(--accent);animation:state-pulse 1.6s ease-in-out infinite}
+.central-event:is([data-kind=needs],[data-kind=limited]) .central-dot{background:var(--ds-warn)}
+.central-event[data-kind=finished] .central-dot{background:var(--ds-success)}
+.central-event[data-kind=failed] .central-dot{background:var(--ds-danger)}
+.workspace.central-view .action-dock{display:none}
+.central-empty{margin:24px 0;color:var(--muted)}
+.central-ask{flex:none;display:flex;flex-direction:column;gap:8px;margin:0 24px 16px;padding:var(--ds-card-pad);border:1px solid var(--ds-border);border-radius:var(--ds-card-radius);background:var(--ds-card);box-shadow:var(--ds-shadow-card)}
+.central-ask{background:var(--panel)}
+.central-ask textarea{width:100%;resize:none;border:0;outline:0;background:transparent;color:var(--text);font:inherit;font-size:var(--type-body);line-height:var(--type-body-leading);font-weight:var(--weight-regular)}
+.central-ask-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.central-ask-actions :is(.primary-button,.secondary-button){min-height:var(--ds-btn-h);padding:0 14px;font-size:var(--type-body)}
+.central-entry{display:flex;align-items:center;gap:8px;width:100%;min-height:var(--ds-btn-h,32px);padding:0 10px;border:0;border-radius:var(--ds-control-radius);background:transparent;color:var(--text);font:inherit;font-size:var(--type-body);line-height:var(--type-body-leading);text-align:left;cursor:pointer}
+.central-entry:hover{background:var(--ds-card-inner)}
+.central-entry[aria-pressed=true]{background:var(--ds-card-inner)}
+.central-entry .icon{color:var(--crown)}
+.central-entry>span:first-of-type{flex:1;min-width:0}
+.central-badge{flex:none;min-width:18px;padding:0 6px;border-radius:var(--ds-control-radius);background:var(--ds-warn);color:var(--on-accent);font-size:var(--type-caption);line-height:var(--type-caption-leading);padding-block:1px;text-align:center;font-variant-numeric:tabular-nums}
+.central-badge[hidden]{display:none}
+.sidebar-central{padding:0 var(--ds-card-pad,10px) 6px}
+@media(prefers-reduced-motion:reduce){.central-event .central-dot{animation:none}}
