@@ -364,7 +364,7 @@ fn clauses(line: &str) -> Vec<&str> {
     let mut chars = line.char_indices().peekable();
     while let Some((i, c)) = chars.next() {
         if matches!(c, ',' | ';' | ':' | '.' | '!' | '?')
-            && chars.peek().map_or(true, |(_, next)| next.is_whitespace())
+            && chars.peek().is_none_or(|(_, next)| next.is_whitespace())
         {
             out.push(&line[start..i]);
             start = i + c.len_utf8();
