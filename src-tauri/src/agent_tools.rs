@@ -512,6 +512,7 @@ fn register_project(state: &AppState, path: &str) -> Result<Value> {
         .ok()
         .filter(|folder| folder.is_dir())
         .ok_or("That folder does not exist.")?;
+    crate::central::refuse_folder(&folder, &crate::central::root())?;
     let store = state.store.lock().map_err(|e| e.to_string())?;
     let known = store
         .db
@@ -528,18 +529,31 @@ fn register_project(state: &AppState, path: &str) -> Result<Value> {
 }
 fn project_page(state: &AppState) -> Result<Value> {
     let store = state.store.lock().map_err(|e| e.to_string())?;
+    project_list(&store)
+}
+
+/// Every project but the Central's own, which agents never see.
+fn project_list(store: &crate::storage::Store) -> Result<Value> {
+    let central = crate::central::root();
     let mut query = store
         .db
-        .prepare("SELECT id,substr(name,1,200) FROM projects ORDER BY name,id LIMIT 101")
+        .prepare("SELECT id,substr(name,1,200),path FROM projects ORDER BY name,id")
         .map_err(|e| e.to_string())?;
     let rows = query
         .query_map([], |row| {
-            Ok(json!({"id":row.get::<_,String>(0)?,"name":bounded(&row.get::<_,String>(1)?,200)}))
+            Ok((json!({"id":row.get::<_,String>(0)?,"name":bounded(&row.get::<_,String>(1)?,200)}), row.get::<_,String>(2)?))
         })
         .map_err(|e| e.to_string())?;
-    let mut projects = rows
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
+    let mut projects = Vec::new();
+    for row in rows {
+        let (project, path) = row.map_err(|e| e.to_string())?;
+        if !crate::central::is_central_path(&path, &central) {
+            projects.push(project);
+        }
+        if projects.len() > 100 {
+            break;
+        }
+    }
     let truncated = projects.len() > 100;
     projects.truncate(100);
     Ok(json!({"projects":projects,"truncated":truncated}))
@@ -738,7 +752,7 @@ fn mutate_task(
 }
 
 /// Told to an agent that would prompt a team lead (queue, steer, start, message) while a phone may drive its thread.
-const CROSS_TEAM_REMOTE: &str = "That thread leads a team, and team workers run with full access. While this computer hosts remote devices, queue, steer, start or message it only with Full access for remote tasks on (the host's Connect settings).";
+pub(crate) const CROSS_TEAM_REMOTE: &str = "That thread leads a team, and team workers run with full access. While this computer hosts remote devices, queue, steer, start or message it only with Full access for remote tasks on (the host's Connect settings).";
 /// Told to an agent in a bot's thread that would prompt a team lead.
 const CROSS_TEAM_BOT: &str = "That thread leads a team, and team workers run with full access. A bot's thread can queue, steer, start or message it only when the bot is set to Full access.";
 
@@ -746,7 +760,7 @@ const CROSS_TEAM_BOT: &str = "That thread leads a team, and team workers run wit
 /// thread bind it too, as for agent-made schedules (`schedules::tools`): while this computer hosts
 /// remote devices (which turns a phone drove is not recorded) a team lead takes it only with
 /// Full access for remote tasks, and a bot's thread reaches one only on a Full access bot.
-fn allow_cross_thread_team(store: &crate::storage::Store, caller: &str, target: &str, hosting: bool, remote_full_access: bool) -> Result<()> {
+pub(crate) fn allow_cross_thread_team(store: &crate::storage::Store, caller: &str, target: &str, hosting: bool, remote_full_access: bool) -> Result<()> {
     if caller == target {
         return Ok(());
     }
@@ -844,6 +858,7 @@ async fn dispatch(
                 }
                 None => current.project_id.clone(),
             };
+            crate::central::refuse_project(&*state.store.lock().map_err(|e| e.to_string())?, &crate::central::root(), &project_id)?;
             let task = state
                 .store
                 .lock()
@@ -1102,6 +1117,22 @@ pub fn resolve_agent_ui_action(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_project_list_hides_the_central_project() {
+        let dir = std::env::temp_dir().join(format!("pandacode-list-{}", crate::storage::id()));
+        let store = crate::storage::Store::open(&dir.join("t.sqlite")).unwrap_or_else(|_| { std::fs::create_dir_all(&dir).unwrap(); crate::storage::Store::open(&dir.join("t.sqlite")).unwrap() });
+        let ordinary = dir.join("work");
+        std::fs::create_dir_all(&ordinary).unwrap();
+        store.add_project(&ordinary).unwrap();
+        let folder = crate::central::root().join("central");
+        std::fs::create_dir_all(&folder).unwrap();
+        store.add_project(&folder).unwrap();
+        let listed = project_list(&store).unwrap();
+        assert_eq!(listed["projects"].as_array().unwrap().len(), 1);
+        assert_eq!(listed["projects"][0]["name"], "work");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn cross_thread_queue_and_steer_reach_a_team_lead_only_past_the_drivers_gates() {

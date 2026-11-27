@@ -13,6 +13,7 @@ const paths: Record<string, string> = {
   search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/>',
   arrow: '<path d="M12 19V5m-6 6 6-6 6 6"/>',
   chevron: '<path d="m9 5 7 7-7 7"/>',
+  star: '<path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.8-5.2 2.8 1-5.8-4.3-4.1 5.9-.9L12 3.5Z"/>',
   crown: '<path d="M3.5 8.5 8 12l4-6.5 4 6.5 4.5-3.5-1.7 9.5H5.2L3.5 8.5Z"/><path d="M5.5 21h13"/>',
   down: '<path d="m6 9 6 6 6-6"/>',
   close: '<path d="m6 6 12 12M6 18 18 6"/>',

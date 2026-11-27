@@ -2071,7 +2071,7 @@ const WEB_ALLOWED_COMMANDS: &[&str] = &[
     "list_projects", "project_hint_folders", "add_project", "remove_project", "relink_project", "list_sessions", "pin_session",
     "dismiss_error_messages", "reorder_sessions", "get_task", "create_session", "create_board_task",
     "update_task_details", "set_task_stage", "start_task", "configure_session", "set_reasoning_effort",
-    "update_session", "delete_session", "chat_create", "chat_cleanup", "get_messages",
+    "update_session", "delete_session", "chat_create", "chat_cleanup", "central_ensure", "get_messages",
     "turn_change_diff", "turn_change_summary", "list_subagents", "get_subagent", "send_message",
     "list_slash_commands", "recipes_list", "recipes_save", "recipes_delete", "recipes_dry_run",
     "provider_check_connection", "resolve_slash_command", "stop_session", "respond_approval",

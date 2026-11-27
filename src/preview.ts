@@ -102,11 +102,21 @@ for (const s of sessions) {
 sessions[2].issue = { kind: 'issue', number: 131, url: 'https://github.com/orbit-labs/orbit/issues/131', title: 'Keyboard shortcut cheat sheet', state: 'open', checkedAt: now };
 // Leader tree showcase: ?leadtree adds a team leader (its workers are seeded by the preview architect) and a task with harness subagents.
 const leadTreeAgents: { sessionId: string; rows: unknown[] }[] = [];
-if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('leadtree')) {
+if (typeof location !== 'undefined' && (new URLSearchParams(location.search).has('leadtree') || new URLSearchParams(location.search).has('central'))) {
   const lead = (id: string, title: string, extra: Partial<Session> = {}): Session => ({ ...sessions[0], id, projectId: 'project-1', title, status: 'running', pinned: false, sidebarOrder: null, taskStage: 'in_progress', lastPromptAt: now - 600000, lastResponseAt: null, issue: undefined, pullRequest: undefined, ...extra } as Session);
   sessions.unshift(lead(leadTreeId, 'Leader: SEO sweep for the home page'), lead('leadtree-agents', 'Refactor the settings store', { provider: 'claude', model: 'sonnet' }));
   const agent = (id: string, name: string, status: string, prompt: string, started: number) => ({ id, parentId: null, name, prompt, status, response: '', toolCount: 3, startedAt: now - started, updatedAt: now - 20000 });
   leadTreeAgents.push({ sessionId: 'leadtree-agents', rows: [agent('sub-1', 'Explore', 'running', 'Find every reader of the settings store', 240000), agent('sub-2', 'Test writer', 'completed', 'Add tests for the migration', 900000), agent('sub-3', 'Linter', 'failed', 'Run the linter on the changed files', 600000)] });
+}
+// Central showcase: ?central adds projects with tasks that run, wait for you, finish and fail, next to the leader seeded above.
+if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('central')) {
+  for (const [id, name] of [['central-tibia', 'Tibia'], ['central-bam', 'BAMemory'], ['central-marcalle', 'Marcalle']]) projects.push({ id, name, path: `/Users/you/Projects/${name.toLowerCase()}` });
+  const task = (id: string, projectId: string, title: string, status: string, extra: Partial<Session> = {}): Session => ({ ...sessions[0], id, projectId, title, status, pinned: false, sidebarOrder: null, taskStage: 'in_progress', lastPromptAt: now - 900000, lastResponseAt: null, issue: undefined, pullRequest: undefined, updatedAt: now - 60000, ...extra } as Session);
+  sessions.unshift(
+    task('central-t1', 'central-tibia', 'Talentos', 'idle', { lastResponseAt: now - 300000, taskStage: 'review' }), task('central-t2', 'central-tibia', 'Outfit craft', 'running'),
+    task('central-b1', 'central-bam', 'Posicionamento', 'waiting_approval'), task('central-b2', 'central-bam', 'Convites de 7 dias', 'idle', { lastResponseAt: now - 2400000, taskStage: 'review' }), task('central-b3', 'central-bam', 'Sentry sweep', 'error', { lastResponseAt: now - 5400000 }),
+    task('central-m1', 'central-marcalle', 'Checkout flow', 'running'), task('central-m2', 'central-marcalle', 'Landing page', 'idle', { lastResponseAt: now - 10800000, taskStage: 'review' }),
+  );
 }
 // Sidebar sections showcase: opt in with ?sections so default session counts stay unchanged.
 if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('sections')) {
@@ -2236,6 +2246,13 @@ export async function invoke<T>(command: string, args: Record<string, any>): Pro
       const project = { id: crypto.randomUUID(), name: 'Chat', path: `/Users/you/PandaCode Chats/chat-${crypto.randomUUID().slice(0, 8)}` }; projects.push(project);
       result = await invoke<Session>('create_session', { projectId: project.id, provider: args.provider, model: args.model, mode: args.mode });
       emit('sessions-changed', undefined); break; // As chat_create does natively, before it returns.
+    }
+    case 'central_ensure': {
+      let project = projects.find(p => p.path.endsWith('/PandaCode Central/central'));
+      if (!project) { project = { id: crypto.randomUUID(), name: 'Central', path: '/Users/you/PandaCode Central/central' }; projects.push(project); }
+      const existing = sessions.find(s => s.projectId === project!.id);
+      result = existing ?? await invoke<Session>('create_session', { projectId: project.id, provider: args.provider, model: args.model, mode: args.mode });
+      emit('sessions-changed', undefined); break;
     }
     case 'chat_cleanup': {
       const chat = projects.some(p => p.id === args.projectId && p.path.includes('/PandaCode Chats/')) && !sessions.some(s => s.projectId === args.projectId);

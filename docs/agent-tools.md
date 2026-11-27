@@ -19,6 +19,8 @@ to create or start separate tasks outside their assignments. Codex registers the
 app tools as dynamic functions; other supported local harnesses use the
 authenticated, run-local MCP bridge.
 
+The Central task alone (see [Central](central.md)) also receives `pandacode_central_overview`, `pandacode_central_read_task` (last reply, 1,500 characters) and `pandacode_central_send_message`, which reach tasks in every project; send asks for approval like `pandacode_send_message`. No other task's catalog has them.
+
 `pandacode_suggest_feature` (title, description) lets a standalone task or team lead suggest a feature of PandaCode itself: it only shows the user a card in the thread (the text should be general, with no project paths, code, names or secrets), needs no approval, and is a no-op once the user turns the cards off; see [Feature requests](feature-requests.md).
 
 `pandacode_create_task` also accepts an optional `projectId` (from `pandacode_list_projects`) to create the task in another project, with the current harness, model and mode, and an optional `start` to start it right away with its description as the first message. It needs the same approval as any created task, which Full access skips; if the start fails, the reply still carries the created task with `started: false` and `startError`.

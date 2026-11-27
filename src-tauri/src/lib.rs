@@ -19,6 +19,7 @@ mod app_updates;
 mod appearance;
 mod architect;
 mod bots;
+mod central;
 mod chats;
 mod browser;
 mod child_env;
@@ -2978,6 +2979,7 @@ async fn launch_operation_admitted(
         let team_tools_missing = team.is_some() && host.is_none();
         let host = agent_tools::with_jev(host, app.clone(), session_id.clone(), stopped.clone());
         let host = bots::tools::with_bot(host, app.clone(), session_id.clone(), stopped.clone());
+        let host = central::with_central(host, app.clone(), session_id.clone(), stopped.clone());
         let host = schedules::tools::with_schedules(host, app.clone(), session_id.clone(), stopped.clone());
         let host = simulator::tools::with_simulator_for(host, app.clone(), session_id.clone(), stopped.clone());
         let host = vm::tools::with_vm(host, app.clone(), session_id.clone(), stopped.clone());
@@ -5257,6 +5259,7 @@ pub(crate) fn main_invoke_handler(invoke: tauri::ipc::Invoke<tauri::Wry>) -> boo
         set_reasoning_effort,
         update_session,
         delete_session_with_attachment_cleanup,
+        central::central_ensure,
         chats::chat_create,
         chats::chat_cleanup,
         get_messages,

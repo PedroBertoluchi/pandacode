@@ -43,6 +43,8 @@ interface SettingsOptions {
   defaultProvider: ProviderId;
   defaultModel: string;
   activityExpanded: boolean;
+  /** Whether the Central entry and board show (default on). */
+  central: boolean;
   compact: boolean;
   wallpapers: boolean;
   theme: 'light' | 'dark';
@@ -186,7 +188,7 @@ function sectionHtml(id: SettingsPage, options: SettingsOptions): string {
   switch (id) {
     case 'recommended': return '<div id="recommended-settings"></div>';
     case 'voice': return '<div id="voice-settings"></div>';
-    case 'general': return `<div class="settings-group">${uiSizeControls()}${switchRow('compact-mode', 'Compact conversation', '', options.compact)}${switchRow('expand-tool-activity', 'Expand tool activity', '', options.activityExpanded)}${switchRow('project-hint', 'Suggest the right project', 'When a new task starts in a drive root or a folder of projects and your first message names one of them, offers to open the task there. Matching is local; no model is called.', options.projectHint)}</div>
+    case 'general': return `<div class="settings-group">${uiSizeControls()}${switchRow('compact-mode', 'Compact conversation', '', options.compact)}${switchRow('expand-tool-activity', 'Expand tool activity', '', options.activityExpanded)}${switchRow('central-enabled', 'Central', 'A board of every project at the top of the sidebar: what runs, needs you, finished or failed. Built from your tasks with no model; a model runs only when you ask Central something.', options.central)}${switchRow('project-hint', 'Suggest the right project', 'When a new task starts in a drive root or a folder of projects and your first message names one of them, offers to open the task there. Matching is local; no model is called.', options.projectHint)}</div>
       <h3 class="settings-heading">Quick launcher</h3><div id="launcher-settings"></div><h3 class="settings-heading">Running agents widget</h3><div id="agents-dock-settings"></div><h3 class="settings-heading">Crash recovery</h3>${crashRestartSettingsHtml()}${options.projects ? '<h3 class="settings-heading">Projects</h3><div id="projects-settings" class="settings-group"></div>' : ''}`;
     case 'appearance': return `<div class="settings-group">
         ${settingRow('Theme', `<button type="button" class="secondary-button" data-action="toggle-theme">${icon(options.theme === 'dark' ? 'sun' : 'moon')}Use ${options.theme === 'dark' ? 'light' : 'dark'}</button>`, 'Imported VS Code themes keep their own.')}

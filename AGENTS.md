@@ -67,6 +67,7 @@ Area → key files → detail (read it before touching the area).
 - Local VMs, cloud sandboxes and agents: `src-tauri/src/vm*`, `cloud*`, `cloud_agents/`; [docs/cloud-agents.md](docs/cloud-agents.md) → [ref](docs/agent-reference.md#local-vms-and-cloud).
 - Crash guard, restart after a crash: `src-tauri/src/crash_guard*`, `src/crash-recovery*.ts`; [docs/crash-recovery.md](docs/crash-recovery.md) → [ref](docs/agent-reference.md#crash-recovery).
 - Connect, headless host: `src-tauri/src/remote*`, `headless.rs`, `relay/`; [docs/remote-access.md](docs/remote-access.md), [docs/headless.md](docs/headless.md) → [ref](docs/agent-reference.md#remote-access-and-headless).
+- Central (all-projects board, cross-project tools for its own task): `src/central-board.ts`, `src/central-view.ts`, `src-tauri/src/central.rs`; [docs/central.md](docs/central.md).
 - Bots, chats: `src-tauri/src/bots*`, `chats.rs`; [docs/bots.md](docs/bots.md), [docs/chats.md](docs/chats.md) → [ref](docs/agent-reference.md#bots-and-chats).
 - Progress, design canvas, Skills manager, Rules & library, jj, capabilities, schedules, recipes, checks, feature request cards: `progress-pip.ts`, `design-canvas.ts`, `skill-manager*.ts`, `skills-library.ts`, `jj.rs`, `schedules.rs`, `recipes.rs`, `checks.rs`, `feature-requests.ts`, `feature_requests.rs`; matching `docs/*.md` → [ref](docs/agent-reference.md#smaller-features).
 - Voice input: `src/voice-*`, `src-tauri/src/voice*`, `scripts/speech-catalog.mjs`; [docs/voice-input.md](docs/voice-input.md) → [ref](docs/agent-reference.md#voice-input).
